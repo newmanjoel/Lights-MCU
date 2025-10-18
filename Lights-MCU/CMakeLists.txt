@@ -33,9 +33,28 @@ project(Lights-MCU C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
+# Define include and source directories
+set(LIGHTS_MCU_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/include)
+set(LIGHTS_MCU_SRC_DIR ${PROJECT_SOURCE_DIR}/src)
+
+# Collect all .cpp files in src/
+file(GLOB_RECURSE LIGHTS_MCU_SOURCES
+    "${LIGHTS_MCU_SRC_DIR}/*.cpp"
+)
+
+message(STATUS "LIGHTS_MCU_SOURCES = ${LIGHTS_MCU_SOURCES}")
+
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(Lights-MCU Lights-MCU.cpp )
+add_executable(Lights-MCU 
+    Lights-MCU.cpp 
+    ${LIGHTS_MCU_SOURCES}
+)
+
+target_include_directories(Lights-MCU PRIVATE 
+    ${LIGHTS_MCU_INCLUDE_DIR}
+    ${PROJECT_SOURCE_DIR}
+)
 
 pico_set_program_name(Lights-MCU "Lights-MCU")
 pico_set_program_version(Lights-MCU "0.1")
