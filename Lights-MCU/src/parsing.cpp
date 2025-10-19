@@ -18,6 +18,8 @@ constexpr uint8_t CRC_LEN = 0x01;
 constexpr uint8_t HEADER_LEN = 0x03;
 
 extern volatile Config light_config;
+extern volatile uint32_t led_frame[250][250];
+// extern volatile uint32_t fps_time_ms;
 
 bool verify_crc(volatile uint8_t *input_buffer, uint8_t len){
     // TODO: add some checking here, right now, assume its good for testing
@@ -93,52 +95,84 @@ void process_byte(volatile char working_byte){
     
 }
 
-Result<uint16_t> config_set(uint8_t config_id, uint16_t config_value){
-    switch(config_id){
-        case 0x00:
+Result<uint32_t> config_set(uint8_t config_id, uint16_t config_value){
+    switch((ConfigIndex) config_id){
+        case ConfigIndex::echo:
             // Echoing back the number. useful for debugging
             return {config_value, ProtoError::OK};
-        case 0x01:
-            if (config_value > 0xFF){
-                return {(uint16_t) config_id, ProtoError::OUT_OF_RANGE};
+        case ConfigIndex::fps_ms:
+            if (config_value > 0xFFFF){
+                return {(uint32_t) config_id, ProtoError::OUT_OF_RANGE};
             }
-            light_config.fps = (uint8_t) config_value;
+            light_config.fps_ms = (uint16_t) config_value;
+            // fps_time_ms = light_config.fps_ms;
             break;
-        case 0x02:
+        case ConfigIndex::running:
             if (config_value > 0x01){
-                return {(uint16_t) config_id, ProtoError::OUT_OF_RANGE};
+                return {(uint32_t) config_id, ProtoError::OUT_OF_RANGE};
             }
             light_config.running = (uint8_t) config_value;
             break;
-        case 0x03:
+        case ConfigIndex::led_count:
             light_config.led_count = config_value;
             break;
-        case 0x04:
+        case ConfigIndex::frame_count:
             light_config.frame_count = config_value;
             break;
+        case ConfigIndex::debug_r:
+            light_config.debug_r = (uint8_t) config_value;
+            break;
+        case ConfigIndex::debug_g:
+            light_config.debug_g = (uint8_t) config_value;
+            break;
+        case ConfigIndex::debug_b:
+            light_config.debug_b = (uint8_t) config_value;
+            break;
         default:
-            return {(uint16_t) config_id, ProtoError::INVALID_PARAM};
+            return {(uint32_t) config_id, ProtoError::INVALID_PARAM};
 
     }
-    return {config_value, ProtoError::OK};
+    return {(uint32_t) config_id, ProtoError::OK};
 }
 
-Result<uint16_t> config_get(uint8_t config_id){
+Result<uint32_t> config_get(uint8_t config_id){
     switch((ConfigIndex)config_id){
-        case ConfigIndex::fps:
-            return {(uint16_t) light_config.fps, ProtoError::OK};
+        case ConfigIndex::fps_ms:
+            return {(uint32_t) light_config.fps_ms, ProtoError::OK};
         case ConfigIndex::running:
-            return {(uint16_t) light_config.running, ProtoError::OK};
+            return {(uint32_t) light_config.running, ProtoError::OK};
         case ConfigIndex::led_count:
-            return {light_config.led_count, ProtoError::OK};
+            return {(uint32_t) light_config.led_count, ProtoError::OK};
         case ConfigIndex::frame_count:
-            return {light_config.frame_count, ProtoError::OK};
+            return {(uint32_t) light_config.frame_count, ProtoError::OK};
         default:
-            return {(uint16_t) config_id, ProtoError::INVALID_PARAM};
+            return {(uint32_t) config_id, ProtoError::INVALID_PARAM};
     }
 }
 
-Result<uint16_t> handle_command(Command& working_command){
+
+Result<uint32_t> color_set(uint8_t frame_id, uint16_t led_id, uint32_t color){
+    if (frame_id > light_config.frame_count){
+        return {(uint32_t) frame_id, ProtoError::OUT_OF_RANGE};
+    }
+    if (led_id > light_config.led_count){
+        return {(uint32_t) led_id, ProtoError::OUT_OF_RANGE};
+    }
+    led_frame[frame_id][led_id] = color;
+    return {(uint32_t) led_id, ProtoError::OK};
+}
+
+Result<uint32_t> color_get(uint8_t frame_id, uint16_t led_id){
+    if (frame_id > light_config.frame_count){
+        return {(uint32_t) frame_id, ProtoError::OUT_OF_RANGE};
+    }
+    if (led_id > light_config.led_count){
+        return {(uint32_t) led_id, ProtoError::OUT_OF_RANGE};
+    }
+    return {led_frame[frame_id][led_id], ProtoError::OK};
+}
+
+Result<uint32_t> handle_command(Command& working_command){
     switch (working_command.id){
 
         case CommandState::NOOP:
@@ -151,16 +185,19 @@ Result<uint16_t> handle_command(Command& working_command){
             return config_set(working_command.param1, working_command.param2);
         case CommandState::CONFIG_GET:
             return config_get(working_command.param1);
+        case CommandState::COLOR_SET:
+            return color_set(working_command.param1, working_command.param2, working_command.param3);
+        case CommandState::COLOR_GET:
+            return color_get(working_command.param1, working_command.param2);
 
-        
         default:
-            return {(uint16_t)working_command.id, ProtoError::BAD_COMMAND};
+            return {(uint32_t)working_command.id, ProtoError::BAD_COMMAND};
     }
 
 }
 
 
-Result<uint16_t> parse_payload(volatile uint8_t* data, uint8_t len) {
+Result<uint32_t> parse_payload(volatile uint8_t* data, uint8_t len) {
 
     if (data[0] != 0x01){
         return {0, ProtoError::BAD_VERSION};
@@ -172,7 +209,7 @@ Result<uint16_t> parse_payload(volatile uint8_t* data, uint8_t len) {
 
     uint8_t param1 = data[3];
     uint16_t param2 = (data[4] << 8) | data[5];
-    uint16_t param3 = (data[6] << 8) | data[7];
+    uint32_t param3 = (data[6] << 24) | (data[7]<<16) | (data[8]<<8) | data[9];
 
     switch(len){
         // want this to fall through. So no breaks.
@@ -188,7 +225,7 @@ Result<uint16_t> parse_payload(volatile uint8_t* data, uint8_t len) {
     
     Command working_command = {cmd_id, param1, param2, param3,};
 
-    Result<uint16_t> result = handle_command(working_command);
+    Result<uint32_t> result = handle_command(working_command);
 
     return result;
 }

@@ -1,0 +1,40 @@
+; 
+; assume that the system is low when not looping
+; set the frequency to 10 MHz
+;
+
+.program ws2811
+    // mov x, null;
+
+.wrap_target
+    // 100ns per clock cycle
+    out x, 1        ; [1] output will be off here
+    set pins, 1 [2] ; [3] always set the pin high for at least 2 cycles
+    mov pins, x [3] ; [4] the variable bit
+    set pins, 0 [1] ; [2]
+    // total time is 10*100ns or 1us
+.wrap
+
+% c-sdk {
+// this is a raw helper function for use by the user which sets up the GPIO output, and configures the SM to output on a particular pin
+
+pio_sm_config ws2811_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    pio_sm_config config = ws2811_program_get_default_config(offset);
+
+    sm_config_set_set_pins(&config, pin, 1);
+    sm_config_set_out_pins(&config, pin, 1);
+
+    // want 10MHz from 125MHz so I want the float value to be 12.5 times slower
+    sm_config_set_clkdiv(&config, 12.5);
+    // autopull = true, shift_direction = right, threshold = 32
+
+
+    // (pio_sm_config *c, bool shift_right, bool autopull, uint pull_threshold)
+    sm_config_set_out_shift(&config, false, true, 24); 
+
+    pio_sm_init(pio, sm, offset, &config);
+    return config;
+}
+%}

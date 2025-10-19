@@ -17,6 +17,7 @@
 #include "include/parsing.h"
 
 #include "blink.pio.h"
+#include "WS2811.pio.h"
 
 
 // SPI Defines
@@ -54,6 +55,7 @@ void blink_pin_forever(PIO pio, uint sm, uint offset, uint pin, uint freq) {
 }
 
 
+
 int64_t alarm_callback(alarm_id_t id, void *user_data) {
     // Put your timeout handler code in here
     return 0;
@@ -80,10 +82,13 @@ extern volatile ParseState uart_parsing_state;
 volatile uint32_t current_time;
 extern volatile uint32_t last_time;
 
-volatile Config light_config = {0,0,0,0};
+volatile Config light_config = {250,1,50,1,0,0,0};
 
 // the amount of time that has passed that the message should be considered invalid
 constexpr uint32_t uart_invalid_timeout_us = 10000;
+
+volatile uint32_t led_frame[250][250] = {0};
+
 
 
 void core1_entry(void){
@@ -97,7 +102,8 @@ void core1_entry(void){
     char uart_buff[255];
     char temp_hex[6];
 
-   
+    uint32_t last_stauts_message = 0; 
+    constexpr uint32_t time_between_status_us = 100000;
     while (true){
 
         current_time = time_us_32();
@@ -119,19 +125,25 @@ void core1_entry(void){
             mutex_enter_blocking(&uart_mutex);
             uart_puts(UART_ID, uart_buff);
             mutex_exit(&uart_mutex);
-            Result<uint16_t> result = parse_payload(uart_buffer, payload_len);
+            Result<uint32_t> result = parse_payload(uart_buffer, payload_len);
             uart_parsing_state = ParseState::WAIT_START; // finished processing, put it back to waiting for the next command
 
             // format the results for sending back
-            sprintf(uart_buff, "Value: %04X, Error: %02X \n", result.value, result.error);
+            sprintf(uart_buff, "Value: %08X, Error: %02X \n", result.value, result.error);
 
             mutex_enter_blocking(&uart_mutex);
             uart_puts(UART_ID, uart_buff);
             mutex_exit(&uart_mutex);
 
         }
+        if (current_time - last_stauts_message > time_between_status_us){
+            mutex_enter_blocking(&uart_mutex);
+            uart_puts(UART_ID, "Current State:");
+            printf("%02X 0x%08X\n", uart_parsing_state, light_config.fps_ms);
+            mutex_exit(&uart_mutex);
+            last_stauts_message = current_time;
+        }
         
-        sleep_ms(2);
     }
 }
 
@@ -182,9 +194,43 @@ void setup_SPI(){
     gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
 }
 
+Pio_SM_info setup_Blinky_Pio(){
+    // PIO Blinking example
+    PIO pio = pio0;
+    uint sm = pio_claim_unused_sm(pio, true);
+    uint offset = pio_add_program(pio, &blink_program);
+    blink_pin_forever(pio, sm, offset, PICO_DEFAULT_LED_PIN, 3);
+    // For more pio examples see https://github.com/raspberrypi/pico-examples/tree/master/pio
+    return {pio, sm, offset};
+}
+
+Pio_SM_info setup_WS2811_Pio(){
+    // PIO Blinking example
+    constexpr uint data_output_pin = 13;
+    gpio_set_dir(data_output_pin, true);
+    // gpio_set_function(data_output_pin, GPIO_FUNC_PIO1);
+    PIO pio = pio1;
+    uint offset = pio_add_program(pio, &ws2811_program);
+    uint sm = pio_claim_unused_sm(pio, true);
+    pio_sm_config config = ws2811_program_init(pio, sm, offset, data_output_pin);
+
+    pio_sm_set_enabled(pio, sm, true);
+
+    // For more pio examples see https://github.com/raspberrypi/pico-examples/tree/master/pio
+    return {pio, sm, offset};
+}
+
+uint32_t rgb_to_int(uint8_t red, uint8_t green, uint8_t blue){
+    // format is GRB
+    uint32_t rgb = (red << 16)|(green<<8) | blue;
+    return rgb;
+}
+
+
 int main()
 {
     stdio_init_all();
+
     mutex_init(&uart_mutex);
     sleep_ms(1); // If this is not here then the whole system hangs forever.
     char uart_buff[50];
@@ -256,21 +302,18 @@ int main()
     // // The DMA has now copied our text from the transmit buffer (src) to the
     // // receive buffer (dst), so we can print it out from there.
     // puts(dst);
+    Pio_SM_info blinky_pio = setup_Blinky_Pio();
+    sprintf(uart_buff, "Blinky sm: %d, offset: %d \n", blinky_pio.sm, blinky_pio.offset);
+    mutex_enter_blocking(&uart_mutex);
+    uart_puts(UART_ID, uart_buff);
+    mutex_exit(&uart_mutex);
 
-    // PIO Blinking example
-    PIO pio = pio0;
-    uint offset = pio_add_program(pio, &blink_program);
-    sprintf(uart_buff, "Loaded program at %d\n", offset);
+    Pio_SM_info ws2811_pio = setup_WS2811_Pio();
+    sprintf(uart_buff, "ws2811 sm: %d, offset: %d \n", ws2811_pio.sm, ws2811_pio.offset);
     mutex_enter_blocking(&uart_mutex);
     uart_puts(UART_ID, uart_buff);
     mutex_exit(&uart_mutex);
     
-    #ifdef PICO_DEFAULT_LED_PIN
-    blink_pin_forever(pio, 0, offset, PICO_DEFAULT_LED_PIN, 3);
-    #else
-    blink_pin_forever(pio, 0, offset, 6, 3);
-    #endif
-    // For more pio examples see https://github.com/raspberrypi/pico-examples/tree/master/pio
 
     // Interpolator example code
     interp_config cfg = interp_default_config();
@@ -305,12 +348,18 @@ int main()
     mutex_exit(&uart_mutex);
     // For more examples of clocks use see https://github.com/raspberrypi/pico-examples/tree/master/clocks
 
-   
+   uint32_t color = rgb_to_int(255,255,255);
+   uint32_t start_time =0;
+   uint32_t end_time =0;
     while (true) {
-        mutex_enter_blocking(&uart_mutex);
-        uart_puts(UART_ID, "Current State:");
-        printf("%02X\n", uart_parsing_state);
-        mutex_exit(&uart_mutex);
-        sleep_ms(1000);
+        start_time = time_us_32();
+        for (uint16_t frame_num =0; frame_num< light_config.frame_count; frame_num++ ){
+            for (uint16_t led_num = 0; led_num< light_config.led_count; led_num++){
+                pio_sm_put_blocking(ws2811_pio.pio, ws2811_pio.sm, led_frame[frame_num][led_num]);
+            }
+            end_time = time_us_32();
+            
+            sleep_ms(light_config.fps_ms);
+        }
     }
 }

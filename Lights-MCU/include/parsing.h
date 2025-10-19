@@ -2,6 +2,7 @@
 #define parsing
 
     #include <cstdint>
+#include <hardware/pio.h>
 
     enum class ProtoError : uint8_t{
         OK = 0x00,
@@ -49,21 +50,34 @@
         CommandState id;
         uint8_t param1;
         uint16_t param2;
-        uint16_t param3;
+        uint32_t param3;
     };
 
     enum class ConfigIndex : uint8_t{
-        fps = 0x01,
+        echo=0x00,
+        fps_ms = 0x01,
         running = 0x02,
         led_count = 0x03,
         frame_count = 0x04,
+        debug_r = 0x05,
+        debug_g = 0x06,
+        debug_b = 0x07,
     };
 
     struct Config {
-        uint8_t fps;
+        uint16_t fps_ms;
         uint8_t running;
         uint16_t led_count;
         uint16_t frame_count;
+        uint8_t debug_r;
+        uint8_t debug_g;
+        uint8_t debug_b;
+    };
+
+    struct Pio_SM_info{
+        PIO pio;
+        uint sm;
+        uint offset;
     };
 
     template<typename T>
@@ -77,6 +91,6 @@
 
 
     void process_byte(char b);
-    Result<uint16_t> parse_payload(volatile uint8_t* data, uint8_t len);
+    Result<uint32_t> parse_payload(volatile uint8_t* data, uint8_t len);
 
 #endif // parsing

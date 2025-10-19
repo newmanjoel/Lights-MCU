@@ -36,4 +36,7 @@ class ConfigIndex(Enum):
     running = 0x02
     led_count = 0x03
     frame_count = 0x04
+    debug_r = 0x05
+    debug_g = 0x06
+    debug_b = 0x07
     

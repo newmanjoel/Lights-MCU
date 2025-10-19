@@ -3,7 +3,7 @@ import serial
 import struct
 import time
 import re
-import structs
+import numpy as np
 from structs import Commands, ConfigIndex, ProtoError
 
 import logging
@@ -40,7 +40,8 @@ def send_command(ser:serial.Serial, id:CommandValue, param1:CommandValue, param2
     assert(type(id) is int)
     assert(type(param1) is int)
     assert(type(param2) is int)
-    assert(type(param3) is int)
+
+    # assert(type(param3) is int)
 
     packet_format = PACKET_FORMAT
     if param2 == -1 and param3 == -1:
@@ -56,15 +57,15 @@ def send_command(ser:serial.Serial, id:CommandValue, param1:CommandValue, param2
             end_packet
         )
     else:
-        
+        packet_format = ">5BHIBB"
         packet = struct.pack(packet_format, 
             start_packet, 
             version,
             id, 
-            0x05, # length in bytes
+            0x07, # length in bytes
             param1, #1 B
             param2, #2 B
-            param3, #2 B
+            param3, #4 B
             0xFF, # CRC
             end_packet
         )
@@ -90,7 +91,7 @@ def read_command(ser:serial.Serial,timeout=1.5):
     logger.debug(f"<- '{str_data=}'")
     return str_data
 
-def wait_for_response(ser:serial.Serial, invalid_time_s:float=2.0) -> dict:
+def wait_for_response(ser:serial.Serial, value_to_wait_for:int|None = None, invalid_time_s:float=2.0) -> dict:
     starting_time = time.time()
 
     while((time.time()-starting_time) < invalid_time_s):
@@ -102,10 +103,14 @@ def wait_for_response(ser:serial.Serial, invalid_time_s:float=2.0) -> dict:
             # split_str=[('002A', '20')]
             value = int(split_str[0][0],16)
             error = int(split_str[0][1], 16)
-            logger.debug(f"{split_str=}")
-            logger.debug(f"{value=} {error=}")
-            logger.debug(f"{ProtoError(error).name=}")
-            return {"value":value, "error":ProtoError(error)}
+
+            if value_to_wait_for is not None:
+                if value_to_wait_for == value:
+                    return {"value":value, "error":ProtoError(error)}
+                else:
+                    pass
+            else:
+                return {"value":value, "error":ProtoError(error)}
     return {"value":None, "error":None}
 
 
@@ -153,7 +158,26 @@ def test_setting_up_config(ser:serial.Serial):
     assert(response["value"] == 0)
 
 
+def rgb_to_int(red:int, green:int, blue:int) -> int:
+    return (red<<16)|(green<<8)|blue
 
+def shift_fix(input:int) -> int:
+    return input<<8
+
+
+def send_and_check_command(ser:serial.Serial, id:CommandValue, param1:CommandValue, param2:CommandValue = -1, param3:CommandValue = -1):
+    send_command(ser, id=id, param1=param1, param2=param2, param3=param3)
+    response = wait_for_response(ser)
+    if response["error"] != ProtoError.OK:
+        logger.error(f"{response}")
+        raise ValueError()
+    send_command(ser, id=id, param1=param1, param2=param2, param3=param3)
+    response = wait_for_response(ser)
+    if response["error"] != ProtoError.OK:
+        logger.error(f"{response}")
+        raise ValueError()
+    # TODO: add something that checks to see if its param1, 2 or 3
+    return response["value"]
 
 def main():
      # Adjust your serial port and baud rate
@@ -164,22 +188,73 @@ def main():
     
     while not system_connunication:
         read_data = read_command(ser)
-        if read_data == 'Current State:00':
+        if read_data.startswith('Current State:00'):
             system_connunication = True
     
-    test_setting_up_config(ser)
+    # test_setting_up_config(ser)
 
+    # set up number of LED's
+    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.led_count, param2=100, param3=0x0)
+    response = wait_for_response(ser, Commands.CONFIG_SET.value)
+    if response["error"] != ProtoError.OK:
+        logger.error(f"{response}")
+        return
+    
+    # set up number of frames
+    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.frame_count, param2=50, param3=0x0)
+    response = wait_for_response(ser)
+    if response["error"] != ProtoError.OK:
+        logger.error(f"{response}")
+        return
+    
+    # set up the FPS_ms
+    desired_fps = 15
+    fps_ms = int(round(1000.0/desired_fps,0))
+    logger.info(f"Actual FPS: {fps_ms=}")
+    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.fps, param2=fps_ms, param3=0x0)
+    response = wait_for_response(ser)
+    if response["error"] != ProtoError.OK:
+        logger.error(f"{response}")
+        return
+    send_command(ser, id=Commands.CONFIG_GET, param1=ConfigIndex.fps, param2=0x00, param3=0x0)
+    response = wait_for_response(ser)
+    assert(response["value"] == fps_ms)
+    if response["error"] != ProtoError.OK:
+        logger.error(f"{response}")
+        return
+    
+    # color in the first frame
+    base_color = shift_fix(rgb_to_int(128,66,11))
+    fade_amount = 10
+    red_linspace = np.linspace(128,0,fade_amount).astype(int).tolist()
+    green_linspace = np.linspace(66,0,fade_amount).astype(int).tolist()
+    blue_linspace = np.linspace(11,0,fade_amount).astype(int).tolist()
 
-    send_command(ser, id=Commands.CONFIG_SET.value, param1=ConfigIndex.echo.value, param2=0x3456, param3=0x7890)
+    color_array = [base_color]*100
+
+    for index, (r,g,b) in enumerate(list(zip(red_linspace, green_linspace, blue_linspace))):
+        color_array[index] = shift_fix(rgb_to_int(r,g,b)) 
+    
+    
+    for frame_index in range(0,50+1):
+        for led_index, led_color in enumerate(color_array):
+            send_command(ser, id=Commands.COLOR_SET, param1=frame_index, param2=led_index, param3=led_color)
+            response = wait_for_response(ser)
+            if response["error"] != ProtoError.OK:
+                logger.error(f"{response}")
+                break
+        color_array = np.roll(color_array,1,axis=0).astype(int).tolist()
+        
+    #         # time.sleep(0.05) # sleep for 50 ms
+        
+    
+
     print("Command sent!")
-
-    system_connunication = False
-    while not system_connunication:
+    last_command_sent = time.time()
+    while (time.time() - last_command_sent < 3.0):
         read_data = read_command(ser)
-        if read_data == 'Current State:00':
-            system_connunication = True
 
 # Example usage
 if __name__ == "__main__":
-   logging.basicConfig(level=logging.DEBUG)
+   logging.basicConfig(level=logging.INFO)
    main()
