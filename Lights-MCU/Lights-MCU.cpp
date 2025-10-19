@@ -82,7 +82,7 @@ extern volatile ParseState uart_parsing_state;
 volatile uint32_t current_time;
 extern volatile uint32_t last_time;
 
-volatile Config light_config = {250,1,50,1,0,0,0};
+volatile Config light_config = {250,1,100,2,0,0,0};
 
 // the amount of time that has passed that the message should be considered invalid
 constexpr uint32_t uart_invalid_timeout_us = 10000;
@@ -273,47 +273,28 @@ int main()
     // gpio_pull_up(I2C_SCL);
     // // For more examples of I2C use see https://github.com/raspberrypi/pico-examples/tree/master/i2c
 
-    // Get a free channel, panic() if there are none
-    // int chan = dma_claim_unused_channel(true);
     
-    // 8 bit transfers. Both read and write address increment after each
-    // transfer (each pointing to a location in src or dst respectively).
-    // No DREQ is selected, so the DMA transfers as fast as it can.
-    
-    // dma_channel_config c = dma_channel_get_default_config(chan);
-    // channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
-    // channel_config_set_read_increment(&c, true);
-    // channel_config_set_write_increment(&c, true);
-    
-    // dma_channel_configure(
-    //     chan,          // Channel to be configured
-    //     &c,            // The configuration we just created
-    //     dst,           // The initial write address
-    //     src,           // The initial read address
-    //     count_of(src), // Number of transfers; in this case each is 1 byte.
-    //     true           // Start immediately.
-    // );
-    
-    // // We could choose to go and do something else whilst the DMA is doing its
-    // // thing. In this case the processor has nothing else to do, so we just
-    // // wait for the DMA to finish.
-    // dma_channel_wait_for_finish_blocking(chan);
-    
-    // // The DMA has now copied our text from the transmit buffer (src) to the
-    // // receive buffer (dst), so we can print it out from there.
-    // puts(dst);
     Pio_SM_info blinky_pio = setup_Blinky_Pio();
     sprintf(uart_buff, "Blinky sm: %d, offset: %d \n", blinky_pio.sm, blinky_pio.offset);
     mutex_enter_blocking(&uart_mutex);
     uart_puts(UART_ID, uart_buff);
     mutex_exit(&uart_mutex);
-
+    
     Pio_SM_info ws2811_pio = setup_WS2811_Pio();
     sprintf(uart_buff, "ws2811 sm: %d, offset: %d \n", ws2811_pio.sm, ws2811_pio.offset);
     mutex_enter_blocking(&uart_mutex);
     uart_puts(UART_ID, uart_buff);
     mutex_exit(&uart_mutex);
     
+    // Get a free channel, panic() if there are none
+    int dma_chan = dma_claim_unused_channel(true);
+    
+    dma_channel_config dma_config = dma_channel_get_default_config(dma_chan);
+    channel_config_set_transfer_data_size(&dma_config, DMA_SIZE_32);
+    channel_config_set_dreq(&dma_config, pio_get_dreq(ws2811_pio.pio, ws2811_pio.sm, true));
+    channel_config_set_read_increment(&dma_config, true);
+    channel_config_set_write_increment(&dma_config, false);
+
 
     // Interpolator example code
     interp_config cfg = interp_default_config();
@@ -348,6 +329,18 @@ int main()
     mutex_exit(&uart_mutex);
     // For more examples of clocks use see https://github.com/raspberrypi/pico-examples/tree/master/clocks
 
+    mutex_enter_blocking(&uart_mutex);
+    printf("Default Config Values\n");
+    printf("\tfps_ms:%d\n\trunning:%d\n\tled_count:%d\n\tframe_count:%d\n",
+        light_config.fps_ms,
+        light_config.running,
+        light_config.led_count,
+        light_config.frame_count
+    );
+    mutex_exit(&uart_mutex);
+
+
+
    uint32_t color = rgb_to_int(255,255,255);
    uint32_t start_time =0;
    uint32_t end_time =0;
@@ -358,13 +351,22 @@ int main()
         for (uint16_t frame_num =0; frame_num< light_config.frame_count; frame_num++ ){
             start_time = time_us_32();
             for (uint16_t led_num = 0; led_num< light_config.led_count; led_num++){
-                pio_sm_put_blocking(ws2811_pio.pio, ws2811_pio.sm, led_frame[frame_num][led_num]);
+                dma_channel_configure(
+                    dma_chan,
+                    &dma_config,
+                    &ws2811_pio.pio->txf[ws2811_pio.sm],
+                    &led_frame[frame_num][0],
+                    (uint32_t) light_config.led_count,
+                    true
+                );
+                    
+                // pio_sm_put(ws2811_pio.pio, ws2811_pio.sm, led_frame[frame_num][led_num]);
             }
             end_time = time_us_32();
             actual_frame_time_us = end_time - start_time;
             calculated_sleep_time = light_config.fps_ms*1000 - actual_frame_time_us;
             sleep_us(calculated_sleep_time);
-
+            // it should take 2.64ms to send 100 lights worth of data 
         }
     }
 }
