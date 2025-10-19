@@ -62,16 +62,21 @@
         debug_r = 0x05,
         debug_g = 0x06,
         debug_b = 0x07,
+        debug_cmd =0x08,
+        status_report = 0x09
     };
 
     struct Config {
         uint16_t fps_ms;
-        uint8_t running;
         uint16_t led_count;
         uint16_t frame_count;
         uint8_t debug_r;
         uint8_t debug_g;
         uint8_t debug_b;
+        bool running;
+        bool debug_cmd;
+        bool status_report;
+        
     };
 
     struct Pio_SM_info{

@@ -3,6 +3,7 @@
 #include "pico/multicore.h"
 #include "pico/mutex.h"
 #include "pico/time.h"
+#include "hardware/irq.h"
 #include "hardware/spi.h"
 #include "hardware/i2c.h"
 #include "hardware/dma.h"
@@ -82,12 +83,15 @@ extern volatile ParseState uart_parsing_state;
 volatile uint32_t current_time;
 extern volatile uint32_t last_time;
 
-volatile Config light_config = {250,1,100,2,0,0,0};
+volatile Config light_config = {250,100,2,0,0,0,1,0,1};
 
 // the amount of time that has passed that the message should be considered invalid
 constexpr uint32_t uart_invalid_timeout_us = 10000;
 
 volatile uint32_t led_frame[250][250] = {0};
+volatile uint32_t working_frame_index = 0;
+volatile int dma_chan;
+
 
 
 
@@ -116,15 +120,17 @@ void core1_entry(void){
         }
         
         if (uart_parsing_state == ParseState::WAIT_FOR_PROCESSING){
-            sprintf(uart_buff, "VER: %02x, CMD: %02x, LEN: %02x, PLD:[%02x,%02x,%02x,%02x,%02x]\n", 
-                    uart_buffer[0], // ver
-                    uart_buffer[1], // cmd
-                    uart_buffer[2], // len
-                    uart_buffer[3],uart_buffer[4],uart_buffer[5],uart_buffer[6],uart_buffer[7]
-                );
-            mutex_enter_blocking(&uart_mutex);
-            uart_puts(UART_ID, uart_buff);
-            mutex_exit(&uart_mutex);
+            if(light_config.debug_cmd){
+                sprintf(uart_buff, "VER: %02x, CMD: %02x, LEN: %02x, PLD:[%02x,%02x,%02x,%02x,%02x]\n", 
+                        uart_buffer[0], // ver
+                        uart_buffer[1], // cmd
+                        uart_buffer[2], // len
+                        uart_buffer[3],uart_buffer[4],uart_buffer[5],uart_buffer[6],uart_buffer[7]
+                    );
+                mutex_enter_blocking(&uart_mutex);
+                uart_puts(UART_ID, uart_buff);
+                mutex_exit(&uart_mutex);
+            }
             Result<uint32_t> result = parse_payload(uart_buffer, payload_len);
             uart_parsing_state = ParseState::WAIT_START; // finished processing, put it back to waiting for the next command
 
@@ -136,13 +142,13 @@ void core1_entry(void){
             mutex_exit(&uart_mutex);
 
         }
-        if (current_time - last_stauts_message > time_between_status_us){
-            mutex_enter_blocking(&uart_mutex);
-            uart_puts(UART_ID, "Current State:");
-            printf("%02X 0x%08X\n", uart_parsing_state, light_config.fps_ms);
-            mutex_exit(&uart_mutex);
-            last_stauts_message = current_time;
-        }
+        // if (current_time - last_stauts_message > time_between_status_us){
+        //     mutex_enter_blocking(&uart_mutex);
+        //     uart_puts(UART_ID, "Current State:");
+        //     printf("%02X 0x%08X\n", uart_parsing_state, light_config.fps_ms);
+        //     mutex_exit(&uart_mutex);
+        //     last_stauts_message = current_time;
+        // }
         
     }
 }
@@ -226,6 +232,39 @@ uint32_t rgb_to_int(uint8_t red, uint8_t green, uint8_t blue){
     return rgb;
 }
 
+bool system_status_report(__unused repeating_timer_t *rt){
+    if(light_config.status_report){
+        mutex_enter_blocking(&uart_mutex);
+        printf("--- STATUS ---\n");
+        printf("Config Values\n");
+        printf("\tfps_ms:%d\n\trunning:%d\n\tled_count:%d\n\tframe_count:%d\n\tcmd_debug:%d\n",
+            light_config.fps_ms,
+            light_config.running,
+            light_config.led_count,
+            light_config.frame_count,
+            light_config.debug_cmd
+        );
+        printf("Uart Status:\n");
+        printf("\tstate: %02X\n", uart_parsing_state);
+        mutex_exit(&uart_mutex);
+    }
+    return true;
+}
+
+
+bool timer_callback(__unused repeating_timer_t *rt){
+    working_frame_index = (working_frame_index+1) % light_config.frame_count;
+    
+    rt->delay_us = ((int64_t) light_config.fps_ms)*-1000;
+
+    // for some reason these didn't work?
+    // dma_channel_set_transfer_count(dma_chan, light_config.led_count, false);
+    // dma_channel_set_write_addr(dma_chan, &led_frame[working_frame_index][0], true);
+
+    if (light_config.running)
+        dma_channel_transfer_from_buffer_now(dma_chan,&led_frame[working_frame_index][0], (uint32_t) light_config.led_count);
+    return true; // keep repeating
+}
 
 int main()
 {
@@ -250,14 +289,7 @@ int main()
     multicore_launch_core1(core1_entry);
     sleep_ms(500);
 
-    // uint32_t check = multicore_fifo_pop_blocking();
-    // if (check != MULTI_CORE_FLAG_VALUE){
-    //     printf("There was an error starting core 1");
-    // }
-    // else{
-    //     multicore_fifo_push_blocking(MULTI_CORE_FLAG_VALUE);
-    //     printf("Core 1 was started correctly (this is from core 0)");
-    // }
+    
 
     // // Chip select is active-low, so we'll initialise it to a driven-high state
     // gpio_set_dir(PIN_CS, GPIO_OUT);
@@ -287,40 +319,45 @@ int main()
     mutex_exit(&uart_mutex);
     
     // Get a free channel, panic() if there are none
-    int dma_chan = dma_claim_unused_channel(true);
+    uint temp_dma_chan = dma_claim_unused_channel(true);
     
-    dma_channel_config dma_config = dma_channel_get_default_config(dma_chan);
+    dma_channel_config dma_config = dma_channel_get_default_config(temp_dma_chan);
     channel_config_set_transfer_data_size(&dma_config, DMA_SIZE_32);
     channel_config_set_dreq(&dma_config, pio_get_dreq(ws2811_pio.pio, ws2811_pio.sm, true));
     channel_config_set_read_increment(&dma_config, true);
     channel_config_set_write_increment(&dma_config, false);
+    dma_chan = temp_dma_chan;
+
+    dma_channel_configure(
+                dma_chan,
+                &dma_config,
+                &ws2811_pio.pio->txf[ws2811_pio.sm],
+                &led_frame[working_frame_index][0],
+                (uint32_t) light_config.led_count,
+                false
+            );
 
 
-    // Interpolator example code
-    interp_config cfg = interp_default_config();
-    // Now use the various interpolator library functions for your use case
-    // e.g. interp_config_clamp(&cfg, true);
-    //      interp_config_shift(&cfg, 2);
-    // Then set the config 
-    interp_set_config(interp0, 0, &cfg);
-    // For examples of interpolator use see https://github.com/raspberrypi/pico-examples/tree/master/interp
 
+    repeating_timer_t timer;
+
+    // negative timeout means exact delay (rather than delay between callbacks)
+    if (!add_repeating_timer_us(-1000000/20, timer_callback, NULL, &timer)) {
+        printf("Failed to add timer\n");
+        return 1;
+    }
+
+    repeating_timer_t system_status_timer;
+
+    // report back general status every 2 seconds
+    if (!add_repeating_timer_us(2000000, system_status_report, NULL, &system_status_timer)) {
+        printf("Failed to add timer\n");
+        return 1;
+    }
     // Timer example code - This example fires off the callback after 2000ms
     // add_alarm_in_ms(2000, alarm_callback, NULL, false);
     // For more examples of timer use see https://github.com/raspberrypi/pico-examples/tree/master/timer
 
-    // Watchdog example code
-    // if (watchdog_caused_reboot()) {
-    //     printf("Rebooted by Watchdog!\n");
-    //     // Whatever action you may take if a watchdog caused a reboot
-    // }
-    
-    // Enable the watchdog, requiring the watchdog to be updated every 100ms or the chip will reboot
-    // second arg is pause on debug which means the watchdog will pause when stepping through code
-    // watchdog_enable(100, 1);
-    
-    // You need to call this function at least more often than the 100ms in the enable call to prevent a reboot
-    // watchdog_update();
     mutex_enter_blocking(&uart_mutex);
     sprintf(uart_buff, "System Clock Frequency is %d Hz\n", clock_get_hz(clk_sys));
     uart_puts(UART_ID, uart_buff);
@@ -329,44 +366,9 @@ int main()
     mutex_exit(&uart_mutex);
     // For more examples of clocks use see https://github.com/raspberrypi/pico-examples/tree/master/clocks
 
-    mutex_enter_blocking(&uart_mutex);
-    printf("Default Config Values\n");
-    printf("\tfps_ms:%d\n\trunning:%d\n\tled_count:%d\n\tframe_count:%d\n",
-        light_config.fps_ms,
-        light_config.running,
-        light_config.led_count,
-        light_config.frame_count
-    );
-    mutex_exit(&uart_mutex);
 
 
-
-   uint32_t color = rgb_to_int(255,255,255);
-   uint32_t start_time =0;
-   uint32_t end_time =0;
-   uint32_t actual_frame_time_us = 0;
-   uint32_t calculated_sleep_time = 0;
-   constexpr uint32_t us_delay_per_led = 23;
     while (true) {
-        for (uint16_t frame_num =0; frame_num< light_config.frame_count; frame_num++ ){
-            start_time = time_us_32();
-            for (uint16_t led_num = 0; led_num< light_config.led_count; led_num++){
-                dma_channel_configure(
-                    dma_chan,
-                    &dma_config,
-                    &ws2811_pio.pio->txf[ws2811_pio.sm],
-                    &led_frame[frame_num][0],
-                    (uint32_t) light_config.led_count,
-                    true
-                );
-                    
-                // pio_sm_put(ws2811_pio.pio, ws2811_pio.sm, led_frame[frame_num][led_num]);
-            }
-            end_time = time_us_32();
-            actual_frame_time_us = end_time - start_time;
-            calculated_sleep_time = light_config.fps_ms*1000 - actual_frame_time_us;
-            sleep_us(calculated_sleep_time);
-            // it should take 2.64ms to send 100 lights worth of data 
-        }
+        tight_loop_contents();
     }
 }

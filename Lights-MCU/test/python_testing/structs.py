@@ -39,4 +39,6 @@ class ConfigIndex(Enum):
     debug_r = 0x05
     debug_g = 0x06
     debug_b = 0x07
+    debug_cmd =0x08
+    status_report = 0x09
     

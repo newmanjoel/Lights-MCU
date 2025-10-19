@@ -111,6 +111,7 @@ def wait_for_response(ser:serial.Serial, value_to_wait_for:int|None = None, inva
                     pass
             else:
                 return {"value":value, "error":ProtoError(error)}
+    raise ValueError("Did not receive the right data in time")
     return {"value":None, "error":None}
 
 
@@ -179,36 +180,48 @@ def send_and_check_command(ser:serial.Serial, id:CommandValue, param1:CommandVal
     # TODO: add something that checks to see if its param1, 2 or 3
     return response["value"]
 
+
+
+
 def main():
      # Adjust your serial port and baud rate
     ser = serial.Serial('/dev/ttyACM0', 115200, timeout=1.5)
     time.sleep(0.2)  # wait for Arduino to reset
 
-    system_connunication = False
+    # system_connunication = False
     
-    while not system_connunication:
-        read_data = read_command(ser)
-        if read_data.startswith('Current State:00'):
-            system_connunication = True
+    # while not system_connunication:
+    #     read_data = read_command(ser)
+    #     if read_data.startswith('Current State:00'):
+    #         system_connunication = True
     
     # test_setting_up_config(ser)
 
+    # turn off the reporting as it can slow_down/error out the bulk of commands
+    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.status_report, param2=0x0, param3=0x0)
+    response = wait_for_response(ser)
+    if response["error"] != ProtoError.OK:
+        logger.error(f"{response}")
+        return
+
     # set up number of LED's
-    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.led_count, param2=100, param3=0x0)
+    desired_leds = 100
+    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.led_count, param2=desired_leds, param3=0x0)
     response = wait_for_response(ser, Commands.CONFIG_SET.value)
     if response["error"] != ProtoError.OK:
         logger.error(f"{response}")
         return
     
     # set up number of frames
-    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.frame_count, param2=50, param3=0x0)
+    desired_frames = 50
+    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.frame_count, param2=desired_frames, param3=0x0)
     response = wait_for_response(ser)
     if response["error"] != ProtoError.OK:
         logger.error(f"{response}")
         return
     
     # set up the FPS_ms
-    desired_fps = 15
+    desired_fps = 30
     fps_ms = int(round(1000.0/desired_fps,0))
     logger.info(f"Actual FPS: {fps_ms=}")
     send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.fps, param2=fps_ms, param3=0x0)
@@ -223,36 +236,64 @@ def main():
         logger.error(f"{response}")
         return
     
-    # color in the first frame
-    base_color = shift_fix(rgb_to_int(128,66,11))
-    fade_amount = 10
-    red_linspace = np.linspace(128,0,fade_amount).astype(int).tolist()
-    green_linspace = np.linspace(66,0,fade_amount).astype(int).tolist()
-    blue_linspace = np.linspace(11,0,fade_amount).astype(int).tolist()
+    send_frames = True
+    if send_frames:
+        # color in the first frame
+        (rb, gb, bb) = (145,145, 145) #base color
+        (rf, gf, bf) = (0, 0 ,0) # color to fade to
+        base_color = shift_fix(rgb_to_int(rb,gb,bb))
+        fade_amount = 20
+        red_linspace = np.linspace(rb,rf,fade_amount).astype(int).tolist()
+        green_linspace = np.linspace(gb,gf,fade_amount).astype(int).tolist()
+        blue_linspace = np.linspace(bb,bf,fade_amount).astype(int).tolist()
 
-    color_array = [base_color]*100
+        color_array = [base_color]*desired_leds
 
-    for index, (r,g,b) in enumerate(list(zip(red_linspace, green_linspace, blue_linspace))):
-        color_array[index] = shift_fix(rgb_to_int(r,g,b)) 
-    
-    
-    for frame_index in range(0,50+1):
-        for led_index, led_color in enumerate(color_array):
-            send_command(ser, id=Commands.COLOR_SET, param1=frame_index, param2=led_index, param3=led_color)
-            response = wait_for_response(ser)
-            if response["error"] != ProtoError.OK:
-                logger.error(f"{response}")
-                break
-        color_array = np.roll(color_array,1,axis=0).astype(int).tolist()
+        for index, (r,g,b) in enumerate(list(zip(red_linspace, green_linspace, blue_linspace))):
+            color_array[index] = shift_fix(rgb_to_int(r,g,b)) 
         
-    #         # time.sleep(0.05) # sleep for 50 ms
+        send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.running, param2=0x0, param3=0x0)
+        response = wait_for_response(ser)
+        if response["error"] != ProtoError.OK:
+            logger.error(f"{response}")
+            return
         
-    
+        send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.debug_cmd, param2=0x0, param3=0x0)
+        if response["error"] != ProtoError.OK:
+            logger.error(f"{response}")
+            return
+        
+        start_time = time.time()
+        for frame_index in range(0,desired_frames+1):
+            for led_index, led_color in enumerate(color_array):
+                if led_index == 0:
+                    led_color = shift_fix(rgb_to_int(158,64,13)) 
+                send_command(ser, id=Commands.COLOR_SET, param1=frame_index, param2=led_index, param3=led_color)
+                response = wait_for_response(ser)
+                if response["error"] != ProtoError.OK:
+                    logger.error(f"{response} {frame_index=} {led_index=}")
+                
+            color_array = np.roll(color_array,1,axis=0).astype(int).tolist()
+            logger.getChild("Frame Generation").info(f"{(frame_index*100)/desired_frames:0.2f}% done")
+        
+        send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.running, param2=0x1, param3=0x0)
+        response = wait_for_response(ser)
+        if response["error"] != ProtoError.OK:
+            logger.error(f"{response}")
+            return
+        end_time = time.time()
+        logger.info(f"It took {end_time-start_time:0.2f} seconds to send {desired_leds} lights with {desired_frames} frames")
+
+        
+        
+    # turn on the reporting
+    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.status_report, param2=0x1, param3=0x0)
 
     print("Command sent!")
     last_command_sent = time.time()
     while (time.time() - last_command_sent < 3.0):
         read_data = read_command(ser)
+        logger.info(f"{read_data=}")
 
 # Example usage
 if __name__ == "__main__":

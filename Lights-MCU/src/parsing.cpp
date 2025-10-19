@@ -111,7 +111,7 @@ Result<uint32_t> config_set(uint8_t config_id, uint16_t config_value){
             if (config_value > 0x01){
                 return {(uint32_t) config_id, ProtoError::OUT_OF_RANGE};
             }
-            light_config.running = (uint8_t) config_value;
+            light_config.running = (bool) config_value;
             break;
         case ConfigIndex::led_count:
             light_config.led_count = config_value;
@@ -127,6 +127,12 @@ Result<uint32_t> config_set(uint8_t config_id, uint16_t config_value){
             break;
         case ConfigIndex::debug_b:
             light_config.debug_b = (uint8_t) config_value;
+            break;
+        case ConfigIndex::debug_cmd:
+            light_config.debug_cmd = (bool) config_value;
+            break;
+        case ConfigIndex::status_report:
+            light_config.status_report = (bool) config_value;
             break;
         default:
             return {(uint32_t) config_id, ProtoError::INVALID_PARAM};
@@ -145,6 +151,10 @@ Result<uint32_t> config_get(uint8_t config_id){
             return {(uint32_t) light_config.led_count, ProtoError::OK};
         case ConfigIndex::frame_count:
             return {(uint32_t) light_config.frame_count, ProtoError::OK};
+        case ConfigIndex::debug_cmd:
+            return {(uint32_t) light_config.debug_cmd, ProtoError::OK};
+        case ConfigIndex::status_report:
+            return {(uint32_t) light_config.debug_cmd, ProtoError::OK};
         default:
             return {(uint32_t) config_id, ProtoError::INVALID_PARAM};
     }
