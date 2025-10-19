@@ -351,15 +351,20 @@ int main()
    uint32_t color = rgb_to_int(255,255,255);
    uint32_t start_time =0;
    uint32_t end_time =0;
+   uint32_t actual_frame_time_us = 0;
+   uint32_t calculated_sleep_time = 0;
+   constexpr uint32_t us_delay_per_led = 23;
     while (true) {
-        start_time = time_us_32();
         for (uint16_t frame_num =0; frame_num< light_config.frame_count; frame_num++ ){
+            start_time = time_us_32();
             for (uint16_t led_num = 0; led_num< light_config.led_count; led_num++){
                 pio_sm_put_blocking(ws2811_pio.pio, ws2811_pio.sm, led_frame[frame_num][led_num]);
             }
             end_time = time_us_32();
-            
-            sleep_ms(light_config.fps_ms);
+            actual_frame_time_us = end_time - start_time;
+            calculated_sleep_time = light_config.fps_ms*1000 - actual_frame_time_us;
+            sleep_us(calculated_sleep_time);
+
         }
     }
 }
