@@ -5,13 +5,13 @@
     3. Glue stuff down so it cant move
     4. include lights in this
 2. ~~get blinky working with debug setup~~
-3. get basic comms working for debug setup
-    1. UART to send basic commands
+3. ~~get basic comms working for debug setup~~
+    1. ~~UART to send basic commands~~
     2. ~~Multicore?~~
-4. create command parser
-5. set and get basic commands
-6. set and get frames
-7. PIO outputs for frame
+4. ~~create command parser~~
+5. ~~set and get basic commands~~
+6. ~~set and get frames~~
+7. ~~PIO outputs for frame~~
 8. set and get memory (need extra dev board)
 9. wireless comms
 
