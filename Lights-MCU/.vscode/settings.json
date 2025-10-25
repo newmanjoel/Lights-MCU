@@ -40,6 +40,10 @@
     "files.associations": {
         "*.acf": "lucidhdl",
         "cstdint": "cpp",
-        "*.pio": "cpp"
-    }
+        "*.pio": "cpp",
+        "random": "cpp",
+        "atomic": "cpp",
+        "cstring": "cpp"
+    },
+    "C_Cpp.errorSquiggles": "enabled"
 }

@@ -2,7 +2,10 @@
 #define parsing
 
     #include <cstdint>
-#include <hardware/pio.h>
+    #include <hardware/pio.h>
+    #include "constants.h"
+
+    
 
     enum class ProtoError : uint8_t{
         OK = 0x00,
@@ -14,6 +17,7 @@
         PAYLOAD_TOO_LONG  = 0x13,
         BAD_VERSION       = 0x14,
         BAD_COMMAND       = 0x15, 
+        BAD_PAYLOAD_LEN   = 0x16,
 
         // Parameter / data issues
         INVALID_PARAM     = 0x20,
@@ -34,7 +38,8 @@
         CONFIG_SET = 0x03,
         CONFIG_GET = 0x04,
         COLOR_SET = 0x05,
-        COLOR_GET = 0x06,
+        MULTI_COLOR_SET = 0x06,
+        COLOR_GET = 0x07,
     };
 
     enum class ParseState {
@@ -48,12 +53,14 @@
 
     struct Command {
         CommandState id;
-        uint8_t param1;
-        uint16_t param2;
-        uint32_t param3;
+        // uint8_t param1;
+        // uint16_t param2;
+        // uint32_t param3;
+        volatile uint32_t *payload;
+        uint8_t payload_len;
     };
 
-    enum class ConfigIndex : uint8_t{
+    enum class ConfigIndex : uint32_t{
         echo=0x00,
         fps_ms = 0x01,
         running = 0x02,
@@ -93,9 +100,23 @@
         bool ok() const { return error == ProtoError::OK; }
     };
 
+    namespace Parsing{
+
+        extern volatile ParseState uart_parsing_state;
+    
+        extern volatile uint8_t uart_buffer[uart_buffer_len];
+        extern volatile uint8_t uart_working_index;
+        extern volatile uint8_t payload_len;
+        // extern volatile uint32_t time_last_byte_recvd;
+        extern volatile uint32_t command_payload[64]; // len max is 256, so max is /4 of that
+    };
+
 
 
     void process_byte(char b);
     Result<uint32_t> parse_payload(volatile uint8_t* data, uint8_t len);
+
+    void clear_uart_buffer();
+
 
 #endif // parsing

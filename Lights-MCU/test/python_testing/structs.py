@@ -28,11 +28,12 @@ class Commands(Enum):
     CONFIG_SET = 0x03
     CONFIG_GET = 0x04
     COLOR_SET = 0x05
-    COLOR_GET = 0x06
+    MULTI_COLOR_SET = 0x06
+    COLOR_GET = 0x07
 
 class ConfigIndex(Enum):
     echo = 0x00
-    fps = 0x01
+    fps_ms = 0x01
     running = 0x02
     led_count = 0x03
     frame_count = 0x04

@@ -4,6 +4,7 @@ import struct
 import time
 import re
 import numpy as np
+from itertools import islice
 from structs import Commands, ConfigIndex, ProtoError
 
 import logging
@@ -26,53 +27,68 @@ serial_delimiter = b'\n'
 type CommandValue = int|Enum
 
 
-def send_command(ser:serial.Serial, id:CommandValue, param1:CommandValue, param2:CommandValue = -1, param3:CommandValue = -1):
+def send_command(ser:serial.Serial, id:CommandValue, data:list[CommandValue|int]):
     """Send a Command struct over Serial in binary format."""
     if isinstance(id, Enum):
         id = id.value
-    if isinstance(param1, Enum):
-        param1 = param1.value
-    if isinstance(param2, Enum):
-        param2 = param2.value
-    if isinstance(param3, Enum):
-        param3 = param3.value
-    
     assert(type(id) is int)
-    assert(type(param1) is int)
-    assert(type(param2) is int)
 
     # assert(type(param3) is int)
+    int_data = []
 
-    packet_format = PACKET_FORMAT
-    if param2 == -1 and param3 == -1:
-        packet_format = ">5BBB"
-        logger.debug(f"Packet format: {packet_format}")
-        packet = struct.pack(packet_format, 
-            start_packet, 
-            version,
-            id, 
-            0x01, # length in bytes
-            param1,
-            0xFF, # CRC
-            end_packet
-        )
-    else:
-        packet_format = ">5BHIBB"
-        packet = struct.pack(packet_format, 
-            start_packet, 
-            version,
-            id, 
-            0x07, # length in bytes
-            param1, #1 B
-            param2, #2 B
-            param3, #4 B
-            0xFF, # CRC
-            end_packet
-        )
+    for thing in data:
+        if isinstance(thing, Enum):
+            int_data.append(thing.value)
+        elif type(thing) == int:
+            int_data.append(thing)
+        else:
+            raise ValueError(f"Unknown data type of {type(thing)}")
+
+    # sending 32 bit ints, so the length is in bytes
+    data_len = len(data)
+
+    packet_format = f'>4B{data_len}I2B'
+    packet = struct.pack(packet_format,
+                         start_packet,
+                         version,
+                         id,
+                         data_len*4, 
+                         *int_data,
+                         0xFF,
+                         end_packet)
+    
+
+    # packet_format = PACKET_FORMAT
+    # if param2 == -1 and param3 == -1:
+    #     packet_format = ">5BBB"
+    #     logger.debug(f"Packet format: {packet_format}")
+    #     packet = struct.pack(packet_format, 
+    #         start_packet, 
+    #         version,
+    #         id, 
+    #         0x01, # length in bytes
+    #         param1,
+    #         0xFF, # CRC
+    #         end_packet
+    #     )
+    # else:
+    #     packet_format = ">5BHIBB"
+    #     packet = struct.pack(packet_format, 
+    #         start_packet, 
+    #         version,
+    #         id, 
+    #         0x07, # length in bytes
+    #         param1, #1 B
+    #         param2, #2 B
+    #         param3, #4 B
+    #         0xFF, # CRC
+    #         end_packet
+    #     )
     
     result = ser.write(packet)
     ser.flush()  # ensure all bytes are sent
-    logger.debug(f"-> {result} '{packet.hex(":")=}'")
+    logger.getChild("->").debug(f"{result} '{packet.hex(":")=}'")
+    # time.sleep(0.2)
 
 def read_command(ser:serial.Serial,timeout=1.5):
     ser.timeout = timeout
@@ -91,12 +107,12 @@ def read_command(ser:serial.Serial,timeout=1.5):
     logger.debug(f"<- '{str_data=}'")
     return str_data
 
-def wait_for_response(ser:serial.Serial, value_to_wait_for:int|None = None, invalid_time_s:float=2.0) -> dict:
+def wait_for_response(ser:serial.Serial, value_to_wait_for:int|None = None, invalid_time_s:float=0.01) -> dict:
     starting_time = time.time()
 
     while((time.time()-starting_time) < invalid_time_s):
         data = ser.read_until(serial_delimiter)
-        logger.getChild("serial").debug(f"{data=}")
+        logger.getChild("<-").debug(f"{data=}")
         str_data = data.decode().strip()
         if str_data.startswith("Value:"):
             split_str = re.findall(r"Value: (?P<value>\w+), Error: (?P<error>\w+)", str_data)
@@ -112,7 +128,6 @@ def wait_for_response(ser:serial.Serial, value_to_wait_for:int|None = None, inva
             else:
                 return {"value":value, "error":ProtoError(error)}
     raise ValueError("Did not receive the right data in time")
-    return {"value":None, "error":None}
 
 
 def test_setting_up_config(ser:serial.Serial):
@@ -181,65 +196,102 @@ def send_and_check_command(ser:serial.Serial, id:CommandValue, param1:CommandVal
     return response["value"]
 
 
+def set_config(ser:serial.Serial, config_index:ConfigIndex|int, config_value:int):
+    if isinstance(config_index, Enum):
+        config_index = config_index.value
 
-
-def main():
-     # Adjust your serial port and baud rate
-    ser = serial.Serial('/dev/ttyACM0', 115200, timeout=1.5)
-    time.sleep(0.2)  # wait for Arduino to reset
-
-    # system_connunication = False
+    while True:
+        try:
+            send_command(ser, id=Commands.CONFIG_SET, data=[config_index, config_value])
+            response = wait_for_response(ser)
+            if response["error"] != ProtoError.OK:
+                logger.getChild("set_config").error(f"{response}")
+        except ValueError:
+            logger.getChild("set_config").info(f"TIMEOUT on receiving data. Trying again.")
+            continue
+        break
     
-    # while not system_connunication:
-    #     read_data = read_command(ser)
-    #     if read_data.startswith('Current State:00'):
-    #         system_connunication = True
-    
-    # test_setting_up_config(ser)
 
+def get_config(ser:serial.Serial, config_index:ConfigIndex|int):
+    if isinstance(config_index, Enum):
+        config_index = config_index.value
+    while True:
+        try:
+            send_command(ser, id=Commands.CONFIG_GET, data=[config_index])
+            response = wait_for_response(ser)
+            if response["error"] != ProtoError.OK:
+                logger.getChild("get_config").error(f"{response}")
+        except ValueError:
+            logger.getChild("get_config").info(f"TIMEOUT on receiving data. Trying again.")
+            continue
+        break
+
+
+def set_color(ser:serial.Serial, frame_index:int, led_index:int, led_color:int):
+
+    while True:
+        try:
+            send_command(ser, id=Commands.COLOR_SET, data=[frame_index, led_index, led_color])
+
+            response = wait_for_response(ser)
+            if response["error"] != ProtoError.OK:
+                logger.getChild("set_color").error(f"{response} {frame_index=} {led_index=}")
+        except ValueError:
+            logger.getChild("set_color").info(f"TIMEOUT on receiving data. Trying again.")
+            continue
+        break
+
+def set_color_array(ser:serial.Serial, frame_index:int, color_array:list[int]):
+    chunk_size = 60
+    # chunks = np.array_split(color_array, chunk_size)
+    it = iter(color_array)
+    chunks =[list(islice(it, chunk_size)) for _ in range((len(color_array) + chunk_size - 1) // chunk_size)]
+    for chunk_index, chunk in enumerate(chunks):
+        while True:
+            try:
+                send_command(ser, id=Commands.MULTI_COLOR_SET, data=[frame_index, chunk_index*chunk_size, *chunk])
+
+                response = wait_for_response(ser)
+                if response["error"] != ProtoError.OK:
+                    logger.getChild("set_color_array").error(f"{response} {frame_index=} {chunk=}")
+            except ValueError:
+                logger.getChild("set_color_array").info(f"TIMEOUT on receiving data. Trying again.")
+                continue
+            break
+
+
+def send_lighting_frames(ser:serial.Serial):
+
+    # turn on the debug printing so I can see whats going on
+    set_config(ser,ConfigIndex.debug_cmd, 0x1)
+    
     # turn off the reporting as it can slow_down/error out the bulk of commands
-    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.status_report, param2=0x0, param3=0x0)
-    response = wait_for_response(ser)
-    if response["error"] != ProtoError.OK:
-        logger.error(f"{response}")
-        return
+    set_config(ser,ConfigIndex.status_report, 0x0)
+    
+    
 
     # set up number of LED's
     desired_leds = 100
-    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.led_count, param2=desired_leds, param3=0x0)
-    response = wait_for_response(ser, Commands.CONFIG_SET.value)
-    if response["error"] != ProtoError.OK:
-        logger.error(f"{response}")
-        return
+    set_config(ser,ConfigIndex.led_count, desired_leds)
+   
     
     # set up number of frames
-    desired_frames = 50
-    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.frame_count, param2=desired_frames, param3=0x0)
-    response = wait_for_response(ser)
-    if response["error"] != ProtoError.OK:
-        logger.error(f"{response}")
-        return
+    desired_frames = 100
+    set_config(ser,ConfigIndex.frame_count, desired_frames)
+
     
     # set up the FPS_ms
     desired_fps = 30
     fps_ms = int(round(1000.0/desired_fps,0))
     logger.info(f"Actual FPS: {fps_ms=}")
-    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.fps, param2=fps_ms, param3=0x0)
-    response = wait_for_response(ser)
-    if response["error"] != ProtoError.OK:
-        logger.error(f"{response}")
-        return
-    send_command(ser, id=Commands.CONFIG_GET, param1=ConfigIndex.fps, param2=0x00, param3=0x0)
-    response = wait_for_response(ser)
-    assert(response["value"] == fps_ms)
-    if response["error"] != ProtoError.OK:
-        logger.error(f"{response}")
-        return
+    set_config(ser,ConfigIndex.fps_ms, fps_ms)
+
+    get_config(ser, ConfigIndex.fps_ms)
     
     send_frames = True
     if send_frames:
         # color in the first frame
-        (rb, gb, bb) = (145,145, 145) #base color
+        (rb, gb, bb) = (255,145, 145) #base color
         (rf, gf, bf) = (0, 0 ,0) # color to fade to
         base_color = shift_fix(rgb_to_int(rb,gb,bb))
         fade_amount = 20
@@ -247,47 +299,76 @@ def main():
         green_linspace = np.linspace(gb,gf,fade_amount).astype(int).tolist()
         blue_linspace = np.linspace(bb,bf,fade_amount).astype(int).tolist()
 
-        color_array = [base_color]*desired_leds
+        color_array:list[int] = [base_color]*desired_leds
 
-        for index, (r,g,b) in enumerate(list(zip(red_linspace, green_linspace, blue_linspace))):
+        for index, (r,g,b) in enumerate(list(zip(red_linspace, green_linspace, blue_linspace))): # type: ignore
             color_array[index] = shift_fix(rgb_to_int(r,g,b)) 
+
         
-        send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.running, param2=0x0, param3=0x0)
-        response = wait_for_response(ser)
-        if response["error"] != ProtoError.OK:
-            logger.error(f"{response}")
-            return
         
-        send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.debug_cmd, param2=0x0, param3=0x0)
-        if response["error"] != ProtoError.OK:
-            logger.error(f"{response}")
-            return
+        set_config(ser,ConfigIndex.running, 0x0)
+        set_config(ser,ConfigIndex.debug_cmd, 0x0)
+
         
         start_time = time.time()
         for frame_index in range(0,desired_frames+1):
-            for led_index, led_color in enumerate(color_array):
-                if led_index == 0:
-                    led_color = shift_fix(rgb_to_int(158,64,13)) 
-                send_command(ser, id=Commands.COLOR_SET, param1=frame_index, param2=led_index, param3=led_color)
-                response = wait_for_response(ser)
-                if response["error"] != ProtoError.OK:
-                    logger.error(f"{response} {frame_index=} {led_index=}")
-                
-            color_array = np.roll(color_array,1,axis=0).astype(int).tolist()
+            set_color_array(ser, frame_index, color_array)
+    
+            color_array = np.roll(color_array,1,axis=0).astype(int).tolist() # type: ignore
             logger.getChild("Frame Generation").info(f"{(frame_index*100)/desired_frames:0.2f}% done")
         
-        send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.running, param2=0x1, param3=0x0)
-        response = wait_for_response(ser)
-        if response["error"] != ProtoError.OK:
-            logger.error(f"{response}")
-            return
+        set_config(ser, ConfigIndex.running, 0x1)
         end_time = time.time()
         logger.info(f"It took {end_time-start_time:0.2f} seconds to send {desired_leds} lights with {desired_frames} frames")
 
         
         
     # turn on the reporting
-    send_command(ser, id=Commands.CONFIG_SET, param1=ConfigIndex.status_report, param2=0x1, param3=0x0)
+    set_config(ser, ConfigIndex.status_report, 0x1)
+    # send_command(ser, id=Commands.CONFIG_SET, data=[ConfigIndex.status_report, 0x1])
+
+
+def main():
+     # Adjust your serial port and baud rate
+    ser = serial.Serial('/dev/ttyACM0', 115200, timeout=0.05)
+    time.sleep(0.2)  # wait for rp2040 to reset
+
+    # default_sleep_time = 1
+    # send_command(ser, id=Commands.CONFIG_SET, data=[ConfigIndex.frame_count, 1])
+    # time.sleep(default_sleep_time)
+    # send_command(ser, id=Commands.CONFIG_SET, data=[ConfigIndex.led_count, 100])
+    # time.sleep(default_sleep_time)
+
+    # send_command(ser, id=Commands.COLOR_SET, data=[0x0, 0x0, shift_fix(rgb_to_int(0,255,0))])
+    # time.sleep(default_sleep_time)
+    # send_command(ser, id=Commands.COLOR_GET, data=[0x0, 0x0])
+    # time.sleep(default_sleep_time)
+    # send_command(ser, id=Commands.MULTI_COLOR_SET, data=[0x0, 0x0, 
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0)),
+    #                                                      shift_fix(rgb_to_int(0,255,0))
+    #                                                      ])
+    # time.sleep(default_sleep_time)
+
+    # send_command(ser, id=Commands.NOOP, data=[])
+    # time.sleep(default_sleep_time)
+
+    send_lighting_frames(ser)
+    
+    
 
     print("Command sent!")
     last_command_sent = time.time()
