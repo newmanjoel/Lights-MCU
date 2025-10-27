@@ -3,7 +3,6 @@
 #include "pico/time.h"
 
 #include "parsing.h"
-#include "utils.h"
 #include "constants.h"
 
 
@@ -23,7 +22,7 @@ using namespace Parsing;
 
 
 
-extern volatile Config light_config;
+extern volatile Animation_Config light_config;
 extern volatile uint32_t led_frame[max_frame_len][max_led_len];
 // extern volatile uint32_t fps_time_ms;
 

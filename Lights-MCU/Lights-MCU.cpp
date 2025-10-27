@@ -13,6 +13,7 @@
 #include "hardware/watchdog.h"
 #include "hardware/clocks.h"
 #include "hardware/uart.h"
+// #include "pico/binary_info.h"
 #include <string>
 
 #include "include/parsing.h"
@@ -21,6 +22,7 @@
 #include "WS2811.pio.h"
 #include "constants.h"
 #include "light_hal.h"
+#include "nRF24L01P.h"
 
 
 
@@ -32,12 +34,15 @@ volatile uint8_t recv_char;
 volatile uint32_t current_time;
 volatile uint32_t time_last_byte_recvd;
 
-volatile Config light_config = {250,100,2,0,0,0,1,0,1};
+volatile Animation_Config light_config = {250,100,2,0,0,0,1,0,1};
 
 
 volatile uint32_t led_frame[max_frame_len][max_led_len] = {0};
 volatile uint32_t working_frame_index = 0;
 volatile int dma_chan;
+
+NRF_HAL spi_hal;
+NRF24 wireless;
 
 
 
@@ -137,12 +142,22 @@ void setup_uart(){
 }
 
 void setup_SPI(){
-     // // SPI initialisation. This example will use SPI at 1MHz.
-    spi_init(SPI_PORT, 1000*1000);
-    gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
-    gpio_set_function(PIN_CS,   GPIO_FUNC_SIO);
-    gpio_set_function(PIN_SCK,  GPIO_FUNC_SPI);
-    gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
+    //  // // SPI initialisation. This example will use SPI at 1MHz.
+    // spi_init(SPI_PORT, 1000*1000);
+    // gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
+    // gpio_set_function(PIN_CS,   GPIO_FUNC_SIO);
+    // gpio_set_function(PIN_SCK,  GPIO_FUNC_SPI);
+    // gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
+    spi_hal = {
+        2, // sck
+        3, // mosi
+        4, // miso
+        6, // ce
+        5, // chip select
+        7, // irq
+    };
+    wireless.init(spi_hal, spi0, 0x55);
+    
 }
 
 void blink_pin_forever(PIO pio, uint sm, uint offset, uint pin, uint freq) {
@@ -190,6 +205,9 @@ uint32_t rgb_to_int(uint8_t red, uint8_t green, uint8_t blue){
 
 bool system_status_report(__unused repeating_timer_t *rt){
     if(light_config.status_report){
+        NRF24_Registers::RX_PWR_D recv_power_dector = {0};
+        
+        recv_power_dector = wireless.ReadReg(NRF24_Registers::Register::RX_PWR_D);
         mutex_enter_blocking(&uart_mutex);
         printf("--- STATUS ---\n");
         printf("Config Values\n");
@@ -202,6 +220,10 @@ bool system_status_report(__unused repeating_timer_t *rt){
         );
         printf("Uart Status:\n");
         printf("\tstate: %02X\n", Parsing::uart_parsing_state);
+        printf("Wireless Status:\n");
+        printf("\tPower: %b\n", wireless.status.PWR_UP);
+        printf("\tRX Mode: %b\n", wireless.status.PRIM_RX);
+        printf("\tRevc Pwr Dector: %b\n", recv_power_dector.RPD);
         mutex_exit(&uart_mutex);
     }
     return true;
@@ -238,8 +260,64 @@ int main()
     mutex_exit(&uart_mutex);
     
     
-    // setup_SPI();
+    setup_SPI();
+    NRF24_Registers::CONFIG reg1;
+    NRF24_Registers::CONFIG reg2;
+    wireless.ChipAvaliable();
+    reg1 = wireless.status;
+    // wireless.WriteReg(0x00, 0x01);
+
     
+
+    // Full register dump of everything
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::CONFIG);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::EN_AA);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::EN_RXADDR);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::SETUP_AW);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::SETUP_RETR);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RF_CHANNEL);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RF_SETUP);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::STATUS);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::OBSERVE_TX);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RX_PWR_D);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RX_ADDR_P0);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RX_ADDR_P1);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RX_ADDR_P2);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RX_ADDR_P3);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RX_ADDR_P4);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RX_ADDR_P5);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::TX_ADDR);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RX_PL_P0);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RX_PL_P1);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RX_PL_P2);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RX_PL_P3);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RX_PL_P4);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::RX_PL_P5);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::FIFO_STATUS);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::DYNPD);
+    wireless.ReadReg((uint8_t)NRF24_Registers::Register::FEATURE);
+
+    NRF24_Registers::STATUS status ={0};
+    status.MAX_RT = 1;
+    printf("Just Max RT: 0x%02X\n", status.to_uint8_t());
+
+
+
+    // sleep_ms(200);
+
+    mutex_enter_blocking(&uart_mutex);
+    printf("NRF24 config:\n\treserved:%b\n\tMASK_RX_DR:%b\n\tMASK_TX_DS:%b\n\tMASK_MAX_RT:%b\n\tEN_CRC:%b\n\tCRCO:%b\n\tPWR_UP:%b\n\tPRIM_RX:%b\n", 
+        reg2.Reserved,
+        reg2.MASK_RX_DR,
+        reg2.MASK_TX_DS,
+        reg2.MASK_MAX_RT,
+        reg2.EN_CRC,
+        reg2.CRCO,
+        reg2.PWR_UP,
+        reg2.PRIM_RX);
+    mutex_exit(&uart_mutex);
+
+
    
     
     multicore_launch_core1(core1_entry);

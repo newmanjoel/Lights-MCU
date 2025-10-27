@@ -73,7 +73,7 @@
         status_report = 0x09
     };
 
-    struct Config {
+    struct Animation_Config {
         uint16_t fps_ms;
         uint16_t led_count;
         uint16_t frame_count;
