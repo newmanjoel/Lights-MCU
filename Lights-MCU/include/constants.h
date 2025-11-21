@@ -6,6 +6,7 @@
     constexpr uint8_t max_frame_len = 250;
     constexpr uint8_t max_led_len = 250;
     constexpr uint8_t uart_buffer_len = 255;
+    constexpr uint16_t max_data_len = 1000;
 
     constexpr char START_CONDITION = 0xAA;
     constexpr char END_CONDITION = 0x55;

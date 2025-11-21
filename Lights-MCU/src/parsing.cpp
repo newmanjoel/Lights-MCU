@@ -4,6 +4,7 @@
 
 #include "parsing.h"
 #include "constants.h"
+#include <files.h>
 
 
 
@@ -24,6 +25,7 @@ using namespace Parsing;
 
 extern volatile Animation_Config light_config;
 extern volatile uint32_t led_frame[max_frame_len][max_led_len];
+extern volatile File files[255];
 // extern volatile uint32_t fps_time_ms;
 
 
@@ -200,6 +202,20 @@ Result<uint32_t> multi_color_set(uint32_t frame_id, uint32_t starting_led_id, ui
     return {(uint32_t) starting_led_id, ProtoError::OK};
 }
 
+Result<uint32_t> file_set(uint32_t file_id, uint32_t starting_location, uint8_t color_array_len, volatile uint32_t* color_array ){
+    if (file_id > 255){
+        return {(uint32_t) file_id, ProtoError::OUT_OF_RANGE};
+    }
+    
+    if (starting_location > max_data_len){
+        return {(uint32_t) starting_location, ProtoError::OUT_OF_RANGE};
+    }
+
+    files[file_id].start = starting_location;
+    files[file_id].end = starting_location + color_array_len - 1;
+    files[file_id].action = EndAction::REPEAT;
+}
+
 Result<uint32_t> color_get(uint32_t frame_id, uint32_t led_id){
     if (frame_id > light_config.frame_count){
         return {(uint32_t) frame_id, ProtoError::OUT_OF_RANGE};
@@ -229,6 +245,8 @@ Result<uint32_t> handle_command(Command& working_command){
             return multi_color_set(working_command.payload[0], working_command.payload[1], working_command.payload_len, working_command.payload);
         case CommandState::COLOR_GET:
             return color_get(working_command.payload[0], working_command.payload[1]);
+        case CommandState::FILE_SET:
+            return file_set(working_command.payload[0], working_command.payload[1], working_command.payload_len, working_command.payload);
 
         default:
             return {(uint32_t)working_command.id, ProtoError::BAD_COMMAND};

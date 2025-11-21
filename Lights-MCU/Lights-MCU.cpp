@@ -23,6 +23,7 @@
 #include "constants.h"
 #include "light_hal.h"
 #include "nRF24L01P.h"
+#include "files.h"
 
 
 
@@ -34,7 +35,15 @@ volatile uint8_t recv_char;
 volatile uint32_t current_time;
 volatile uint32_t time_last_byte_recvd;
 
-volatile Animation_Config light_config = {250,100,2,0,0,0,1,0,1};
+volatile Animation_Config light_config = {250,100,2,0,0,0,1,0,1,0};
+
+uint32_t next_frame[max_led_len] = {0};
+uint32_t current_frame[max_led_len] = {0};
+uint8_t current_file = 0;
+uint32_t playback_location = 0;
+
+volatile File files[255];
+volatile uint32_t data[max_data_len] = {0};
 
 
 volatile uint32_t led_frame[max_frame_len][max_led_len] = {0};
@@ -210,6 +219,14 @@ bool system_status_report(__unused repeating_timer_t *rt){
         recv_power_dector = wireless.ReadReg(NRF24_Registers::Register::RX_PWR_D);
         mutex_enter_blocking(&uart_mutex);
         printf("--- STATUS ---\n");
+        printf("Files\n");
+        printf("\tcurrent_file:%d\n\tplayback_location:%d\n\tfile_start:%d\n\tfile_end:%d\n",
+            current_file,
+            playback_location,
+            files[current_file].start,
+            files[current_file].end
+        );
+
         printf("Config Values\n");
         printf("\tfps_ms:%d\n\trunning:%d\n\tled_count:%d\n\tframe_count:%d\n\tcmd_debug:%d\n",
             light_config.fps_ms,
@@ -239,9 +256,51 @@ bool timer_callback(__unused repeating_timer_t *rt){
     // dma_channel_set_transfer_count(dma_chan, light_config.led_count, false);
     // dma_channel_set_write_addr(dma_chan, &led_frame[working_frame_index][0], true);
 
+
     if (light_config.running)
-        dma_channel_transfer_from_buffer_now(dma_chan,&led_frame[working_frame_index][0], (uint32_t) light_config.led_count);
+        memcpy(current_frame, next_frame, sizeof(next_frame));
+        dma_channel_transfer_from_buffer_now(dma_chan,&current_frame, (uint32_t) light_config.led_count);
+        // set up the next frame for the next loop. The DMA is happening in the background so we dont have to worry about timeing
+        int i = 0;
+        int j = 0;
+        int temp_index = 0;
+        uint8_t count = 0;
+
+        // data is a continous section of memory for all of the light colors in RLE form
+        // current file is just the index of the current file that we are playing back
+        // we need to read data from the last place we were and keep reading until we have hit the config.led_count ammount
+        // playback location is the last position that we read +1, start from this location next time
+        
+
+        for (i=0; i<light_config.led_count; i++){
+            count = data[playback_location] >> 24;
+            for (j=0; j<=count; j++){
+                next_frame[temp_index++] = data[playback_location];
+            }
+            playback_location++;
+            if (playback_location >= files[current_file].end){
+                if (files[current_file].action == EndAction::REPEAT){
+                    playback_location = files[current_file].start;
+                }
+                else if (files[current_file].action == EndAction::RUN_FILE){
+                    // TODO: figure out a way to set this kind of info
+                }
+                
+            }
+        }
+        
+       
     return true; // keep repeating
+}
+
+void default_file_0(){
+    // setup a basic static color for file 0
+    data[0] = 0xFF<<24 + rgb_to_int(168, 136, 20);
+    files[0].start = 0;
+    files[0].end = 0;
+    files[0].action = EndAction::REPEAT;
+    playback_location = files[0].start;
+
 }
 
 int main()
@@ -251,6 +310,8 @@ int main()
     mutex_init(&uart_mutex);
     sleep_ms(1); // If this is not here then the whole system hangs forever.
     char uart_buff[50];
+
+    default_file_0();
 
     setup_uart();
     
