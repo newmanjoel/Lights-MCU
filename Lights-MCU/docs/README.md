@@ -34,3 +34,31 @@
 [RP2040 Multicore - Video](https://www.youtube.com/watch?v=aIFElaK14V4)
 
 
+## Dev Setup
+### NRF24 Wiring
+IRQ -> ORANGE
+MISO -> YELLOW
+MOSI -> GREEN
+SCK -> BLUE
+CSN -> PURPLE
+CE -> GREY
+VCC -> WHITE
+GND -> BLACK
+
+IRQ -> Pico GPIO 7 (pin 10)
+MOSI -> Pico GPIO 3 (pin 5)
+MISO -> Pico GPIO 4 (pin 6)
+SCK -> Pico GPIO 2 (pin 4)
+SCN -> Pico GPIO 5 (pin 7)
+CE -> Pico GPIO 6 (pin 9)
+VCC -> Pico 3v3 (pin 36)
+GND -> Pico GND (pin 8)
+
+Blue -> 4
+Green -> 5
+Yellow -> 6
+Purple -> 7
+Black -> 8
+Grey -> 9
+Orange -> 10
+White -> 36
