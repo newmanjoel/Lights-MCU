@@ -52,8 +52,32 @@ volatile uint32_t led_frame[max_frame_len][max_led_len] = {0};
 volatile uint32_t working_frame_index = 0;
 volatile int dma_chan;
 
+char uart_buff[250];
+char status_buff[500];
+JsonDocument status;
+uint16_t debug_working_index = 0;
+
 NRF_HAL spi_hal;
 NRF24 wireless;
+
+
+void output_byte(uint8_t b) {
+    // uart_putc_raw(uart0, b);  // hardware UART Only
+    putchar_raw(b);           // Both UART AND USB
+}
+
+void uart_out(char* buffer, int buffer_len){
+    mutex_enter_blocking(&uart_mutex);
+    for(int i=0; i< buffer_len; i++){
+        if (buffer[i] == 0){ // NULL ending
+            mutex_exit(&uart_mutex);
+            return;
+        }
+        output_byte(buffer[i]);
+    }
+    // output_byte(0); // NULL ending
+    mutex_exit(&uart_mutex);
+}
 
 
 
@@ -62,16 +86,24 @@ void core1_entry(void){
     mutex_enter_blocking(&uart_mutex);
     printf("Core 1 Started\n");
     mutex_exit(&uart_mutex);
+    JsonDocument result;
 
-    char uart_buff[255];
+    
 
     while (true){
-
+        
         current_time = time_us_32();
 
-        if (((current_time - time_last_byte_recvd) > uart_invalid_timeout_us) and (Parsing::uart_parsing_state != ParseState::WAIT_START)){
+        if (((current_time - time_last_byte_recvd) > uart_invalid_timeout_us)
+        and (current_time > time_last_byte_recvd)
+        and (Parsing::uart_parsing_state != ParseState::WAIT_START)){
             // mutex_enter_blocking(&uart_mutex);
-            // uart_puts(UART_ID, "Message Invalid, State Timeout\n");
+            auto time_diff = current_time - time_last_byte_recvd;
+            char temp_buff[50];
+            sprintf(temp_buff, "State_timeout. Time Diff: %d us\n", time_diff);
+            mutex_enter_blocking(&uart_mutex);
+            uart_puts(uart0, temp_buff);
+            mutex_exit(&uart_mutex);
             // printf("State was: %02x and WAIT_START is %02x\n", Parsing::uart_parsing_state, ParseState::WAIT_START);
             // mutex_exit(&uart_mutex);
             Parsing::uart_parsing_state = ParseState::WAIT_START;
@@ -98,17 +130,31 @@ void core1_entry(void){
                 uart_puts(UART_ID, uart_buff);
                 mutex_exit(&uart_mutex);
             }
-            JsonDocument result = parse_payload(Parsing::uart_buffer, Parsing::payload_len);
+            
+            uint32_t timing = time_us_32();
+            result.clear();
+            status["Timing"]["result_clear"] = time_us_32()-timing;
+            // Total processing time for a FILE::GET is about 155 us
+            timing = time_us_32();
+            parse_payload(result, Parsing::uart_buffer, Parsing::payload_len);
+            
+            status["Timing"]["e2e"] = time_us_32()-time_last_byte_recvd;
+            status["Timing"]["parse"] = time_us_32()-timing;
             
             // format the results for sending back
             // sprintf(uart_buff, "Value: %08X, Error: %02X \n", result.value, result.error);
-            clear_uart_buffer();
-            serializeJson(result, uart_buff);
             
-            mutex_enter_blocking(&uart_mutex);
-            uart_puts(UART_ID, uart_buff);
-            uart_putc(UART_ID, '\n');
-            mutex_exit(&uart_mutex);
+            auto length = serializeJson(result, uart_buff);
+            uart_buff[length] = '\n';
+
+            uart_out(uart_buff, 250);
+            clear_uart_buffer(uart_buff, 250);
+            // uart_out(['\n'], 255);
+            
+            // mutex_enter_blocking(&uart_mutex);
+            // uart_puts(UART_ID, uart_buff);
+            // uart_putc(UART_ID, '\n');
+            // mutex_exit(&uart_mutex);
 
             // mutex_enter_blocking(&uart_mutex);
             
@@ -139,8 +185,12 @@ void setup_uart(){
     // Set datasheet for more information on function select
     gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
     gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+    gpio_set_slew_rate(UART_TX_PIN, GPIO_SLEW_RATE_FAST);
+    gpio_set_drive_strength(UART_RX_PIN, GPIO_DRIVE_STRENGTH_12MA);
+
     uart_set_hw_flow(UART_ID, false, false);
 
+    /* Disabling the interrupts in favor of polling for now, to get the USB working. 
     // Set up a RX interrupt
     // We need to set up the handler first
     // Select correct interrupt for the UART we are using
@@ -156,6 +206,7 @@ void setup_uart(){
     // Use some the various UART functions to send out data
     // In a default system, printf will also output via the default UART
     // For more examples of UART use see https://github.com/raspberrypi/pico-examples/tree/master/uart
+    */
 }
 
 void setup_SPI(){
@@ -222,11 +273,12 @@ uint32_t rgb_to_int(uint8_t red, uint8_t green, uint8_t blue){
 
 bool system_status_report(__unused repeating_timer_t *rt){
     if(light_config.status_report){
-        NRF24_Registers::RX_PWR_D recv_power_dector = {0};
-        JsonDocument status;
-        char buffer[500];
+        // NRF24_Registers::RX_PWR_D recv_power_dector = {0};
         
-        recv_power_dector = wireless.ReadReg(NRF24_Registers::Register::RX_PWR_D);
+
+        
+        
+        // recv_power_dector = wireless.ReadReg(NRF24_Registers::Register::RX_PWR_D);
 
         status["Status"]["playback_location"] = playback_location;
         status["Status"]["Current_File"] = current_file;
@@ -239,41 +291,24 @@ bool system_status_report(__unused repeating_timer_t *rt){
         status["Config"]["frame_count"] =light_config.frame_count;
         status["Config"]["debug_cmd"] =light_config.debug_cmd;
 
-        status["Wireless"]["Power"] =wireless.status.PWR_UP;
-        status["Wireless"]["RX Mode"] =wireless.status.PRIM_RX;
-        status["Wireless"]["Revc Pwr Dector"] =recv_power_dector.RPD;
+        // status["Wireless"]["Power"] =wireless.status.PWR_UP;
+        // status["Wireless"]["RX Mode"] =wireless.status.PRIM_RX;
+        // status["Wireless"]["Revc Pwr Dector"] =recv_power_dector.RPD;
 
-        serializeJson(status, buffer);
+        // clear_uart_buffer(buffer, 500);
+        clear_uart_buffer(status_buff, 500);
+        auto length = serializeJsonPretty(status, status_buff);
+        status_buff[length] = '\n';
+
+        // uart_out(status_buff, 500);
 
         mutex_enter_blocking(&uart_mutex);
-        // clear_uart_buffer();
-        uart_puts(UART_ID, buffer);
-        uart_putc(UART_ID,'\n');
-        // printf("--- STATUS ---\n");
-        // printf("Files\n");
-        // printf("\tcurrent_file:%d\n\tplayback_location:%d\n\tfile_start:%d\n\tfile_end:%d\n",
-        //     current_file,
-        //     playback_location,
-        //     files[current_file].start,
-        //     files[current_file].end
-        // );
-
-        // printf("Config Values\n");
-        // printf("\tfps_ms:%d\n\trunning:%d\n\tled_count:%d\n\tframe_count:%d\n\tcmd_debug:%d\n",
-        //     light_config.fps_ms,
-        //     light_config.running,
-        //     light_config.led_count,
-        //     light_config.frame_count,
-        //     light_config.debug_cmd
-        // );
-        // printf("Uart Status:\n");
-        // printf("\tstate: %02X\n", Parsing::uart_parsing_state);
-        // printf("Wireless Status:\n");
-        // printf("\tPower: %b\n", wireless.status.PWR_UP);
-        // printf("\tRX Mode: %b\n", wireless.status.PRIM_RX);
-        // printf("\tRevc Pwr Dector: %b\n", recv_power_dector.RPD);
-        // clear_uart_buffer();
+        uart_puts(UART_ID, status_buff); // only put on hardware UART
         mutex_exit(&uart_mutex);
+        status.remove("Debug");
+        debug_working_index = 0;
+        status.remove("Timing");
+        // status.clear();
     }
     return true;
 }
@@ -359,6 +394,35 @@ void default_file_0(){
 
 }
 
+void poll_uarts() {
+    // --- 1. Read from hardware UART ---
+    while (uart_is_readable(uart0)) {
+        uint8_t b = uart_getc(uart0);
+        time_last_byte_recvd = time_us_32();
+        process_byte(b);
+    }
+
+    // --- 2. Read from USB CDC (stdio_usb) ---
+    int c;
+    while ((c = getchar_timeout_us(100)) != PICO_ERROR_TIMEOUT) {
+        time_last_byte_recvd = time_us_32();
+        // char temp_buff[50];
+        // sprintf(temp_buff, "Before: C:%d S:%d\n", c, (uint8_t) Parsing::uart_parsing_state);
+        // mutex_enter_blocking(&uart_mutex);
+        // uart_puts(uart0, temp_buff);
+        // mutex_exit(&uart_mutex);
+        process_byte((uint8_t)c);
+        // sprintf(temp_buff, "After: C:%d S:%d\n", c, (uint8_t) Parsing::uart_parsing_state);
+        // mutex_enter_blocking(&uart_mutex);
+        // uart_puts(uart0, temp_buff);
+        // mutex_exit(&uart_mutex);
+        
+        
+    }
+}
+
+
+
 int main()
 {
     stdio_init_all();
@@ -413,9 +477,9 @@ int main()
     wireless.ReadReg((uint8_t)NRF24_Registers::Register::DYNPD);
     wireless.ReadReg((uint8_t)NRF24_Registers::Register::FEATURE);
 
-    NRF24_Registers::STATUS status ={0};
-    status.MAX_RT = 1;
-    printf("Just Max RT: 0x%02X\n", status.to_uint8_t());
+    NRF24_Registers::STATUS wireless_status ={0};
+    wireless_status.MAX_RT = 1;
+    printf("Just Max RT: 0x%02X\n", wireless_status.to_uint8_t());
 
 
 
@@ -506,6 +570,8 @@ int main()
         return 1;
     }
     light_config.debug_cmd = false;
+    status.clear();
+    light_config.status_report = true;
 
     mutex_enter_blocking(&uart_mutex);
     sprintf(uart_buff, "System Clock Frequency is %d Hz\n", clock_get_hz(clk_sys));
@@ -518,6 +584,7 @@ int main()
 
 
     while (true) {
-        tight_loop_contents();
+        // tight_loop_contents();
+        poll_uarts();
     }
 }

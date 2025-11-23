@@ -108,12 +108,13 @@ def read_command(ser:serial.Serial,timeout=1.5):
     logger.debug(f"<- '{str_data=}'")
     return str_data
 
-def wait_for_response(ser:serial.Serial, value_to_wait_for:int|None = None, invalid_time_s:float=0.01) -> dict:
+def wait_for_response(ser:serial.Serial, value_to_wait_for:int|None = None, invalid_time_s:float=0.5) -> dict:
     starting_time = time.time()
 
     while((time.time()-starting_time) < invalid_time_s):
         data = ser.read_until(serial_delimiter)
         if len(data) == 0:
+            # ser.flush()  # ensure all bytes are sent
             continue
         logger.getChild("wfr").getChild("<-").debug(f"{data=}")
         str_data = data.decode().strip()
@@ -412,45 +413,38 @@ def send_lighting_frames(ser:serial.Serial):
     # send_command(ser, id=Commands.CONFIG_SET, data=[ConfigIndex.status_report, 0x1])
 
 
+def get_file_info(ser:serial.Serial, file_id:int):
+   
+    while True:
+        try:
+            send_command(ser, id=Commands.FILE_GET, data=[file_id])
+            response = wait_for_response(ser)
+            if response["error"] != ProtoError.OK:
+                logger.getChild("get_file_info").error(f"{response}")
+            return response
+        except ValueError:
+            logger.getChild("get_file_info").info(f"TIMEOUT on receiving data. Trying again.")
+            continue
+        break
+    return None
+
+def get_lighting_frames(ser:serial.Serial):
+    # turn on the debug printing so I can see whats going on
+    # set_config(ser,ConfigIndex.debug_cmd, 0x1)
+
+    # set_config(ser, ConfigIndex.status_report, 0)
+    result = get_file_info(ser, 0x0)
+    logger.info(f"{result=}")
+
 def main():
      # Adjust your serial port and baud rate
-    ser = serial.Serial('/dev/ttyACM0', 115200, timeout=0.1)
+    ser = serial.Serial('/dev/ttyACM1', 115200, timeout=0.1)
     time.sleep(0.2)  # wait for rp2040 to reset
 
-    # default_sleep_time = 1
-    # send_command(ser, id=Commands.CONFIG_SET, data=[ConfigIndex.frame_count, 1])
-    # time.sleep(default_sleep_time)
-    # send_command(ser, id=Commands.CONFIG_SET, data=[ConfigIndex.led_count, 100])
-    # time.sleep(default_sleep_time)
-
-    # send_command(ser, id=Commands.COLOR_SET, data=[0x0, 0x0, shift_fix(rgb_to_int(0,255,0))])
-    # time.sleep(default_sleep_time)
-    # send_command(ser, id=Commands.COLOR_GET, data=[0x0, 0x0])
-    # time.sleep(default_sleep_time)
-    # send_command(ser, id=Commands.MULTI_COLOR_SET, data=[0x0, 0x0, 
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0)),
-    #                                                      shift_fix(rgb_to_int(0,255,0))
-    #                                                      ])
-    # time.sleep(default_sleep_time)
-
-    # send_command(ser, id=Commands.NOOP, data=[])
-    # time.sleep(default_sleep_time)
+   
 
     send_lighting_frames(ser)
+    get_lighting_frames(ser)
     
     
 

@@ -43,6 +43,7 @@
         COLOR_GET = 0x07,
         FILE_SET = 0x08,
         FILE_GET = 0x09,
+        FILE_CLEAR = 0x0A,
     };
 
     enum class ParseState {
@@ -119,9 +120,10 @@
 
 
     void process_byte(char b);
-    JsonDocument parse_payload(volatile uint8_t* data, uint8_t len);
+    void parse_payload(JsonDocument& result, volatile uint8_t* data, uint8_t len);
 
-    void clear_uart_buffer();
+    // template<typename T>
+    void clear_uart_buffer(char* buff, uint16_t buff_len);
 
 
 #endif // parsing

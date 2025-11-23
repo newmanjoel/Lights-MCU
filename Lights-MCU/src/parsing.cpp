@@ -5,6 +5,7 @@
 #include "parsing.h"
 #include "constants.h"
 #include <files.h>
+#include <hardware/uart.h>
 
 
 
@@ -32,13 +33,10 @@ extern volatile uint8_t current_file;
 extern volatile uint32_t playback_location;
 // extern volatile uint32_t fps_time_ms;
 
-
-void clear_uart_buffer(){
+// template<typename T>
+void clear_uart_buffer(char* buff, uint16_t buff_len){
     // clear out the buffer so old data is not played with again
-    for (int i = 0; i < uart_buffer_len; i++){uart_buffer[i]=0;}
-    uart_working_index = 0;
-    payload_len = 0;
-
+    for (int i = 0; i < buff_len; i++){buff[i]=0;}
 }
 
 bool verify_crc(volatile uint8_t *input_buffer, uint8_t len){
@@ -54,6 +52,11 @@ bool verify_crc(volatile uint8_t *input_buffer, uint8_t len){
 */
 
 void process_byte(volatile char working_byte){
+    // uart_putc_raw(uart0, '`');
+    // uart_putc(uart0, working_byte);
+    // uart_putc_raw(uart0, '`');
+    // uart_putc_raw(uart0, '\n');
+
     switch (uart_parsing_state) {
         case ParseState::WAIT_START:
             if (working_byte == START_CONDITION) {
@@ -112,8 +115,8 @@ void process_byte(volatile char working_byte){
     
 }
 
-JsonDocument config_set(uint32_t config_id, uint32_t config_value){
-    JsonDocument result;
+void config_set(JsonDocument& result, uint32_t config_id, uint32_t config_value){
+    // JsonDocument result;
     result["value"] = config_id;
     result["error"] = (uint8_t) ProtoError::OK;
     switch((ConfigIndex) config_id){
@@ -175,11 +178,11 @@ JsonDocument config_set(uint32_t config_id, uint32_t config_value){
             break;
 
     }
-    return result;
+    return;
 }
 
-JsonDocument config_get(uint32_t config_id){
-    JsonDocument result;
+void config_get(JsonDocument& result, uint32_t config_id){
+    // JsonDocument result;
     result["value"] = config_id;
     result["error"] = (uint8_t) ProtoError::OK;
     switch((ConfigIndex)config_id){
@@ -213,46 +216,46 @@ JsonDocument config_get(uint32_t config_id){
             break;
     }
 
-    return result;
+    return;
 
 }
 
 
-JsonDocument color_set(uint32_t frame_id, uint32_t led_id, uint32_t color){
-    JsonDocument result;
+void color_set(JsonDocument& result, uint32_t frame_id, uint32_t led_id, uint32_t color){
+    // JsonDocument result;
     result["value"] = led_id;
     result["error"] = (uint8_t) ProtoError::OK;
     if (frame_id > max_frame_len){
         result["value"] = frame_id;
         result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
-        return result;
+        return;
         // return {(uint32_t) frame_id, ProtoError::OUT_OF_RANGE};
     }
     if (led_id > max_led_len){
         result["value"] = led_id;
         result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
         // return {(uint32_t) led_id, ProtoError::OUT_OF_RANGE};
-        return result;
+        return;
     }
     led_frame[(uint8_t)frame_id][(uint8_t)led_id] = color;
     // return {(uint32_t) led_id, ProtoError::OK};
-    return result;
+    return;
 }
 
-JsonDocument multi_color_set(uint32_t frame_id, uint32_t starting_led_id, uint8_t color_array_len, volatile uint32_t* color_array){
-    JsonDocument result;
+void multi_color_set(JsonDocument& result, uint32_t frame_id, uint32_t starting_led_id, uint8_t color_array_len, volatile uint32_t* color_array){
+    // JsonDocument result;
     result["value"] = starting_led_id;
     result["error"] = (uint8_t) ProtoError::OK;
     if (frame_id > max_frame_len){
         result["value"] = frame_id;
         result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
-        return result;
+        return;
         // return {(uint32_t) frame_id, ProtoError::OUT_OF_RANGE};
     }
     if (starting_led_id + color_array_len > max_led_len){
         result["value"] = starting_led_id;
         result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
-        return result;
+        return;
         // return {(uint32_t) starting_led_id, ProtoError::OUT_OF_RANGE};
     }
     
@@ -263,18 +266,18 @@ JsonDocument multi_color_set(uint32_t frame_id, uint32_t starting_led_id, uint8_
         led_frame[working_frame_id][working_led_index+i] = color_array[2+i];
     }
     // return {(uint32_t) starting_led_id, ProtoError::OK};
-    return result;
+    return;
 }
 
-JsonDocument file_set(uint32_t file_id, uint32_t starting_location, uint32_t update, uint8_t color_array_len, volatile uint32_t* color_array ){
-    JsonDocument result;
+void file_set(JsonDocument& result, uint32_t file_id, uint32_t starting_location, uint32_t update, uint8_t color_array_len, volatile uint32_t* color_array ){
+    // JsonDocument result;
     result["value"] = file_id;
     result["error"] = (uint8_t) ProtoError::OK;
     if (file_id > 255){
         result["extra"] = "File Id";
         result["value"] = file_id;
         result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
-        return result;
+        return;
         // return {(uint32_t) file_id, ProtoError::OUT_OF_RANGE};
     }
     
@@ -282,14 +285,14 @@ JsonDocument file_set(uint32_t file_id, uint32_t starting_location, uint32_t upd
         result["extra"] = "Starting Location";
         result["value"] = starting_location;
         result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
-        return result;
+        return;
         // return {(uint32_t) starting_location, ProtoError::OUT_OF_RANGE};
     }
     if (update == 1 and files[file_id].end + color_array_len > max_data_len){
         result["extra"] = "Ending Location";
         result["value"] = file_id;
         result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
-        return result;
+        return;
         // return {(uint32_t) starting_location, ProtoError::OUT_OF_RANGE};
     }
     uint32_t current_location = 0;
@@ -310,32 +313,57 @@ JsonDocument file_set(uint32_t file_id, uint32_t starting_location, uint32_t upd
         temp_index++;
     }
     // return {file_id, ProtoError::OK};
-    return result;
+    return;
 }
 
-JsonDocument color_get(uint32_t frame_id, uint32_t led_id){
-    JsonDocument result;
+void file_get(JsonDocument& result, uint32_t file_id){
+    // JsonDocument result;
+    result["value"][0] = file_id;
+    result["value"][1] = files[file_id].start;
+    result["value"][2] = files[file_id].end;
+    result["value"][3] = (uint8_t) files[file_id].action;
+    result["error"] = (uint8_t) ProtoError::OK;
+    
+    return;
+}
+
+void file_clear(JsonDocument& result, uint32_t file_id){
+    // JsonDocument result;
+    result["value"] = file_id;
+    result["error"] = (uint8_t) ProtoError::OK;
+    
+    for (int i=files[file_id].start; i< files[file_id].end; i++){
+        data[i] = 0;
+    }
+    files[file_id].start = 0;
+    files[file_id].end = 0;
+
+    return;
+}
+
+void color_get(JsonDocument& result, uint32_t frame_id, uint32_t led_id){
+    // JsonDocument result;
     result["value"] = frame_id;
     result["error"] = (uint8_t) ProtoError::OK;
     if (frame_id > light_config.frame_count){
         result["value"] = frame_id;
         result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
-        return result;
+        return;
         // return {(uint32_t) frame_id, ProtoError::OUT_OF_RANGE};
     }
     if (led_id > light_config.led_count){
         result["value"] = led_id;
         result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
-        return result;
+        return;
         // return {(uint32_t) led_id, ProtoError::OUT_OF_RANGE};
     }
     // return {led_frame[frame_id][led_id], ProtoError::OK};
     result["value"] = led_frame[frame_id][led_id];
-    return result;
+    return;
 }
 
-JsonDocument handle_command(Command& working_command){
-    JsonDocument result;
+void handle_command(JsonDocument& result, Command& working_command){
+    // JsonDocument result;
     switch (working_command.id){
 
         case CommandState::NOOP:
@@ -349,39 +377,40 @@ JsonDocument handle_command(Command& working_command){
             break;
         
         case CommandState::CONFIG_SET:
-            return config_set(working_command.payload[0], working_command.payload[1]);
+            return config_set(result, working_command.payload[0], working_command.payload[1]);
         case CommandState::CONFIG_GET:
-            return config_get(working_command.payload[0]);
+            return config_get(result, working_command.payload[0]);
         case CommandState::COLOR_SET:
-            return color_set(working_command.payload[0], working_command.payload[1], working_command.payload[2]);
+            return color_set(result, working_command.payload[0], working_command.payload[1], working_command.payload[2]);
         case CommandState::MULTI_COLOR_SET:
-            return multi_color_set(working_command.payload[0], working_command.payload[1], working_command.payload_len, working_command.payload);
+            return multi_color_set(result, working_command.payload[0], working_command.payload[1], working_command.payload_len, working_command.payload);
         case CommandState::COLOR_GET:
-            return color_get(working_command.payload[0], working_command.payload[1]);
+            return color_get(result, working_command.payload[0], working_command.payload[1]);
         case CommandState::FILE_SET:
-            return file_set(working_command.payload[0], working_command.payload[1], working_command.payload[2], working_command.payload_len, working_command.payload);
-
+            return file_set(result, working_command.payload[0], working_command.payload[1], working_command.payload[2], working_command.payload_len, working_command.payload);
+        case CommandState::FILE_GET:
+            return file_get(result, working_command.payload[0]);
         default:
             result["value"] = (uint8_t) working_command.id;
             result["error"] = (uint8_t) ProtoError::BAD_COMMAND;
             break;
     }
-    return result;
+    return;
 
 }
 
 
-JsonDocument parse_payload(volatile uint8_t* data, uint8_t len) {
-    JsonDocument result;
-    if (data[0] != 0x01){
+void parse_payload(JsonDocument& result, volatile uint8_t* payload_data, uint8_t len) {
+    // JsonDocument result;
+    if (payload_data[0] != 0x01){
         result["value"] = 0;
         result["error"] = (uint8_t) ProtoError::BAD_VERSION;
-        return result;
+        return;
     }
 
 
 
-    CommandState cmd_id = (CommandState) data[1];
+    CommandState cmd_id = (CommandState) payload_data[1];
 
     // TODO: add a for loop to process the bytes into 32 bit ints.
     // send back error if the length isn't a length of 32 bits
@@ -389,7 +418,7 @@ JsonDocument parse_payload(volatile uint8_t* data, uint8_t len) {
     if (len%4 != 0){
         result["value"] = 0;
         result["error"] = (uint8_t) ProtoError::BAD_PAYLOAD_LEN;
-        return result;
+        return;
     }
 
     for (int i=0; i<64; i++){
@@ -400,7 +429,7 @@ JsonDocument parse_payload(volatile uint8_t* data, uint8_t len) {
     uint8_t working_array_index = 0;
     uint32_t temp;
     for (int i=0; i<len; i+=4){
-        temp = (data[3+i] << 24) | (data[4+i]<<16) | (data[5+i]<<8) | data[6+i];
+        temp = (payload_data[3+i] << 24) | (payload_data[4+i]<<16) | (payload_data[5+i]<<8) | payload_data[6+i];
         command_payload[working_array_index++] = temp;
     }
     
@@ -424,7 +453,7 @@ JsonDocument parse_payload(volatile uint8_t* data, uint8_t len) {
     
     Command working_command = {cmd_id, command_payload, working_array_index};
 
-    result = handle_command(working_command);
+    handle_command(result, working_command);
 
-    return result;
+    return;
 }
