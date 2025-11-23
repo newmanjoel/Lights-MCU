@@ -3,6 +3,7 @@
 
     #include <cstdint>
     #include <hardware/pio.h>
+    #include <ArduinoJson-v7.4.2.h>
     #include "constants.h"
 
     
@@ -40,6 +41,8 @@
         COLOR_SET = 0x05,
         MULTI_COLOR_SET = 0x06,
         COLOR_GET = 0x07,
+        FILE_SET = 0x08,
+        FILE_GET = 0x09,
     };
 
     enum class ParseState {
@@ -70,7 +73,8 @@
         debug_g = 0x06,
         debug_b = 0x07,
         debug_cmd =0x08,
-        status_report = 0x09
+        status_report = 0x09,
+        current_file = 0x0A
     };
 
     struct Animation_Config {
@@ -83,6 +87,7 @@
         bool running;
         bool debug_cmd;
         bool status_report;
+        uint8_t current_file;
         
     };
 
@@ -114,7 +119,7 @@
 
 
     void process_byte(char b);
-    Result<uint32_t> parse_payload(volatile uint8_t* data, uint8_t len);
+    JsonDocument parse_payload(volatile uint8_t* data, uint8_t len);
 
     void clear_uart_buffer();
 

@@ -30,6 +30,8 @@ class Commands(Enum):
     COLOR_SET = 0x05
     MULTI_COLOR_SET = 0x06
     COLOR_GET = 0x07
+    FILE_SET = 0x08
+    FILE_GET = 0x09
 
 class ConfigIndex(Enum):
     echo = 0x00
@@ -42,4 +44,5 @@ class ConfigIndex(Enum):
     debug_b = 0x07
     debug_cmd =0x08
     status_report = 0x09
+    current_file = 0x0A
     
