@@ -3,6 +3,7 @@
 
     #include <cstdint>
     #include <hardware/pio.h>
+    #include <ArduinoJson-v7.4.2.h>
     #include "constants.h"
 
     
@@ -73,7 +74,7 @@
         debug_b = 0x07,
         debug_cmd =0x08,
         status_report = 0x09,
-        current_file = 0x10
+        current_file = 0x0A
     };
 
     struct Animation_Config {
@@ -118,7 +119,7 @@
 
 
     void process_byte(char b);
-    Result<uint32_t> parse_payload(volatile uint8_t* data, uint8_t len);
+    JsonDocument parse_payload(volatile uint8_t* data, uint8_t len);
 
     void clear_uart_buffer();
 

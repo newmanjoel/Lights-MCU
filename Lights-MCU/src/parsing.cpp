@@ -8,6 +8,7 @@
 
 
 
+
 namespace Parsing{
 
     volatile ParseState uart_parsing_state = ParseState::WAIT_START;
@@ -26,6 +27,9 @@ using namespace Parsing;
 extern volatile Animation_Config light_config;
 extern volatile uint32_t led_frame[max_frame_len][max_led_len];
 extern volatile File files[255];
+extern volatile uint32_t data[];
+extern volatile uint8_t current_file;
+extern volatile uint32_t playback_location;
 // extern volatile uint32_t fps_time_ms;
 
 
@@ -108,21 +112,35 @@ void process_byte(volatile char working_byte){
     
 }
 
-Result<uint32_t> config_set(uint32_t config_id, uint32_t config_value){
+JsonDocument config_set(uint32_t config_id, uint32_t config_value){
+    JsonDocument result;
+    result["value"] = config_id;
+    result["error"] = (uint8_t) ProtoError::OK;
     switch((ConfigIndex) config_id){
         case ConfigIndex::echo:
             // Echoing back the number. useful for debugging
-            return {config_value, ProtoError::OK};
+            // result["error"] = (uint8_t) ProtoError::OK;
+            // return {config_value, ProtoError::OK};
+            break;
         case ConfigIndex::fps_ms:
             if (config_value > 0xFFFF){
-                return {(uint32_t) config_id, ProtoError::OUT_OF_RANGE};
+                result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
+                // return {(uint32_t) config_id, ProtoError::OUT_OF_RANGE};
+                break;
+            }
+            if (config_value == 0x00){
+                result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
+                // return {(uint32_t) config_id, ProtoError::OUT_OF_RANGE};
+                break;
             }
             light_config.fps_ms = (uint16_t) config_value;
             // fps_time_ms = light_config.fps_ms;
             break;
         case ConfigIndex::running:
             if (config_value > 0x01){
-                return {(uint32_t) config_id, ProtoError::OUT_OF_RANGE};
+                result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
+                // return {(uint32_t) config_id, ProtoError::OUT_OF_RANGE};
+                break;
             }
             light_config.running = (bool) config_value;
             break;
@@ -147,50 +165,95 @@ Result<uint32_t> config_set(uint32_t config_id, uint32_t config_value){
         case ConfigIndex::status_report:
             light_config.status_report = (bool) config_value;
             break;
+        case ConfigIndex::current_file:
+            current_file = (uint8_t) config_value;
+            playback_location = files[current_file].start;
+            break;
         default:
-            return {config_id, ProtoError::INVALID_PARAM};
+            result["error"] = (uint8_t) ProtoError::INVALID_PARAM;
+            // return {config_id, ProtoError::INVALID_PARAM};
+            break;
 
     }
-    return {config_id, ProtoError::OK};
+    return result;
 }
 
-Result<uint32_t> config_get(uint32_t config_id){
+JsonDocument config_get(uint32_t config_id){
+    JsonDocument result;
+    result["value"] = config_id;
+    result["error"] = (uint8_t) ProtoError::OK;
     switch((ConfigIndex)config_id){
         case ConfigIndex::fps_ms:
-            return {(uint32_t) light_config.fps_ms, ProtoError::OK};
+            result["value"] = light_config.fps_ms;
+            // return {(uint32_t) light_config.fps_ms, ProtoError::OK};
+            break;
         case ConfigIndex::running:
-            return {(uint32_t) light_config.running, ProtoError::OK};
+            result["value"] = light_config.running;
+            // return {(uint32_t) light_config.running, ProtoError::OK};
+            break;
         case ConfigIndex::led_count:
-            return {(uint32_t) light_config.led_count, ProtoError::OK};
+            result["value"] = light_config.led_count;
+            // return {(uint32_t) light_config.led_count, ProtoError::OK};
+            break;
         case ConfigIndex::frame_count:
-            return {(uint32_t) light_config.frame_count, ProtoError::OK};
+            result["value"] = light_config.frame_count;
+            // return {(uint32_t) light_config.frame_count, ProtoError::OK};
+            break;
         case ConfigIndex::debug_cmd:
-            return {(uint32_t) light_config.debug_cmd, ProtoError::OK};
+            result["value"] = light_config.debug_cmd;
+            // return {(uint32_t) light_config.debug_cmd, ProtoError::OK};
+            break;
         case ConfigIndex::status_report:
-            return {(uint32_t) light_config.debug_cmd, ProtoError::OK};
+            result["value"] = light_config.status_report;
+            // return {(uint32_t) light_config.debug_cmd, ProtoError::OK};
+            break;
         default:
-            return {(uint32_t) config_id, ProtoError::INVALID_PARAM};
+            result["error"] = (uint8_t) ProtoError::INVALID_PARAM;
+            // return {(uint32_t) config_id, ProtoError::INVALID_PARAM};
+            break;
     }
+
+    return result;
+
 }
 
 
-Result<uint32_t> color_set(uint32_t frame_id, uint32_t led_id, uint32_t color){
+JsonDocument color_set(uint32_t frame_id, uint32_t led_id, uint32_t color){
+    JsonDocument result;
+    result["value"] = led_id;
+    result["error"] = (uint8_t) ProtoError::OK;
     if (frame_id > max_frame_len){
-        return {(uint32_t) frame_id, ProtoError::OUT_OF_RANGE};
+        result["value"] = frame_id;
+        result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
+        return result;
+        // return {(uint32_t) frame_id, ProtoError::OUT_OF_RANGE};
     }
     if (led_id > max_led_len){
-        return {(uint32_t) led_id, ProtoError::OUT_OF_RANGE};
+        result["value"] = led_id;
+        result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
+        // return {(uint32_t) led_id, ProtoError::OUT_OF_RANGE};
+        return result;
     }
     led_frame[(uint8_t)frame_id][(uint8_t)led_id] = color;
-    return {(uint32_t) led_id, ProtoError::OK};
+    // return {(uint32_t) led_id, ProtoError::OK};
+    return result;
 }
 
-Result<uint32_t> multi_color_set(uint32_t frame_id, uint32_t starting_led_id, uint8_t color_array_len, volatile uint32_t* color_array){
+JsonDocument multi_color_set(uint32_t frame_id, uint32_t starting_led_id, uint8_t color_array_len, volatile uint32_t* color_array){
+    JsonDocument result;
+    result["value"] = starting_led_id;
+    result["error"] = (uint8_t) ProtoError::OK;
     if (frame_id > max_frame_len){
-        return {(uint32_t) frame_id, ProtoError::OUT_OF_RANGE};
+        result["value"] = frame_id;
+        result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
+        return result;
+        // return {(uint32_t) frame_id, ProtoError::OUT_OF_RANGE};
     }
     if (starting_led_id + color_array_len > max_led_len){
-        return {(uint32_t) starting_led_id, ProtoError::OUT_OF_RANGE};
+        result["value"] = starting_led_id;
+        result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
+        return result;
+        // return {(uint32_t) starting_led_id, ProtoError::OUT_OF_RANGE};
     }
     
     uint8_t working_frame_id = (uint8_t) frame_id;
@@ -199,41 +262,91 @@ Result<uint32_t> multi_color_set(uint32_t frame_id, uint32_t starting_led_id, ui
     for (uint8_t i = 0; i<color_array_len ; i++){
         led_frame[working_frame_id][working_led_index+i] = color_array[2+i];
     }
-    return {(uint32_t) starting_led_id, ProtoError::OK};
+    // return {(uint32_t) starting_led_id, ProtoError::OK};
+    return result;
 }
 
-Result<uint32_t> file_set(uint32_t file_id, uint32_t starting_location, uint8_t color_array_len, volatile uint32_t* color_array ){
+JsonDocument file_set(uint32_t file_id, uint32_t starting_location, uint32_t update, uint8_t color_array_len, volatile uint32_t* color_array ){
+    JsonDocument result;
+    result["value"] = file_id;
+    result["error"] = (uint8_t) ProtoError::OK;
     if (file_id > 255){
-        return {(uint32_t) file_id, ProtoError::OUT_OF_RANGE};
+        result["extra"] = "File Id";
+        result["value"] = file_id;
+        result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
+        return result;
+        // return {(uint32_t) file_id, ProtoError::OUT_OF_RANGE};
     }
     
-    if (starting_location > max_data_len){
-        return {(uint32_t) starting_location, ProtoError::OUT_OF_RANGE};
+    if (starting_location + color_array_len > max_data_len){
+        result["extra"] = "Starting Location";
+        result["value"] = starting_location;
+        result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
+        return result;
+        // return {(uint32_t) starting_location, ProtoError::OUT_OF_RANGE};
     }
-
+    if (update == 1 and files[file_id].end + color_array_len > max_data_len){
+        result["extra"] = "Ending Location";
+        result["value"] = file_id;
+        result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
+        return result;
+        // return {(uint32_t) starting_location, ProtoError::OUT_OF_RANGE};
+    }
+    uint32_t current_location = 0;
     files[file_id].start = starting_location;
-    files[file_id].end = starting_location + color_array_len - 1;
+    if (update == 1){
+        current_location = files[file_id].end +1;
+        files[file_id].end = files[file_id].end + color_array_len  -3;
+    }
+    else{
+        current_location = starting_location;
+        files[file_id].end = starting_location + color_array_len - 1 -3;
+    }
+    
     files[file_id].action = EndAction::REPEAT;
+    int temp_index = 0;
+    for (int i =3; i<color_array_len; i++ ){
+        data[current_location + temp_index] = color_array[i];
+        temp_index++;
+    }
+    // return {file_id, ProtoError::OK};
+    return result;
 }
 
-Result<uint32_t> color_get(uint32_t frame_id, uint32_t led_id){
+JsonDocument color_get(uint32_t frame_id, uint32_t led_id){
+    JsonDocument result;
+    result["value"] = frame_id;
+    result["error"] = (uint8_t) ProtoError::OK;
     if (frame_id > light_config.frame_count){
-        return {(uint32_t) frame_id, ProtoError::OUT_OF_RANGE};
+        result["value"] = frame_id;
+        result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
+        return result;
+        // return {(uint32_t) frame_id, ProtoError::OUT_OF_RANGE};
     }
     if (led_id > light_config.led_count){
-        return {(uint32_t) led_id, ProtoError::OUT_OF_RANGE};
+        result["value"] = led_id;
+        result["error"] = (uint8_t) ProtoError::OUT_OF_RANGE;
+        return result;
+        // return {(uint32_t) led_id, ProtoError::OUT_OF_RANGE};
     }
-    return {led_frame[frame_id][led_id], ProtoError::OK};
+    // return {led_frame[frame_id][led_id], ProtoError::OK};
+    result["value"] = led_frame[frame_id][led_id];
+    return result;
 }
 
-Result<uint32_t> handle_command(Command& working_command){
+JsonDocument handle_command(Command& working_command){
+    JsonDocument result;
     switch (working_command.id){
 
         case CommandState::NOOP:
-            return {0, ProtoError::OK};
+            result["value"] =0;
+            result["error"] = (uint8_t) ProtoError::OK;
+            break;
 
         case CommandState::START:
-            return {0, ProtoError::OK};
+            result["value"] =0;
+            result["error"] = (uint8_t) ProtoError::OK;
+            break;
         
         case CommandState::CONFIG_SET:
             return config_set(working_command.payload[0], working_command.payload[1]);
@@ -246,19 +359,24 @@ Result<uint32_t> handle_command(Command& working_command){
         case CommandState::COLOR_GET:
             return color_get(working_command.payload[0], working_command.payload[1]);
         case CommandState::FILE_SET:
-            return file_set(working_command.payload[0], working_command.payload[1], working_command.payload_len, working_command.payload);
+            return file_set(working_command.payload[0], working_command.payload[1], working_command.payload[2], working_command.payload_len, working_command.payload);
 
         default:
-            return {(uint32_t)working_command.id, ProtoError::BAD_COMMAND};
+            result["value"] = (uint8_t) working_command.id;
+            result["error"] = (uint8_t) ProtoError::BAD_COMMAND;
+            break;
     }
+    return result;
 
 }
 
 
-Result<uint32_t> parse_payload(volatile uint8_t* data, uint8_t len) {
-
+JsonDocument parse_payload(volatile uint8_t* data, uint8_t len) {
+    JsonDocument result;
     if (data[0] != 0x01){
-        return {0, ProtoError::BAD_VERSION};
+        result["value"] = 0;
+        result["error"] = (uint8_t) ProtoError::BAD_VERSION;
+        return result;
     }
 
 
@@ -269,7 +387,9 @@ Result<uint32_t> parse_payload(volatile uint8_t* data, uint8_t len) {
     // send back error if the length isn't a length of 32 bits
 
     if (len%4 != 0){
-        return {0, ProtoError::BAD_PAYLOAD_LEN};
+        result["value"] = 0;
+        result["error"] = (uint8_t) ProtoError::BAD_PAYLOAD_LEN;
+        return result;
     }
 
     for (int i=0; i<64; i++){
@@ -304,7 +424,7 @@ Result<uint32_t> parse_payload(volatile uint8_t* data, uint8_t len) {
     
     Command working_command = {cmd_id, command_payload, working_array_index};
 
-    Result<uint32_t> result = handle_command(working_command);
+    result = handle_command(working_command);
 
     return result;
 }

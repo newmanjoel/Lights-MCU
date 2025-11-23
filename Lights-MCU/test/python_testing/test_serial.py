@@ -1,4 +1,5 @@
 from enum import Enum
+import json
 import serial
 import struct
 import time
@@ -112,21 +113,45 @@ def wait_for_response(ser:serial.Serial, value_to_wait_for:int|None = None, inva
 
     while((time.time()-starting_time) < invalid_time_s):
         data = ser.read_until(serial_delimiter)
-        logger.getChild("<-").debug(f"{data=}")
+        if len(data) == 0:
+            continue
+        logger.getChild("wfr").getChild("<-").debug(f"{data=}")
         str_data = data.decode().strip()
-        if str_data.startswith("Value:"):
-            split_str = re.findall(r"Value: (?P<value>\w+), Error: (?P<error>\w+)", str_data)
-            # split_str=[('002A', '20')]
-            value = int(split_str[0][0],16)
-            error = int(split_str[0][1], 16)
+        try:
+            jdata = json.loads(str_data)
+        except json.JSONDecodeError as e:
+            logger.error(f"{str_data=} IS NOT VALID JSON:{e=}")
+            continue
 
-            if value_to_wait_for is not None:
-                if value_to_wait_for == value:
-                    return {"value":value, "error":ProtoError(error)}
-                else:
-                    pass
-            else:
+        # logger.getChild("wfr").info(f"VALID JSON!")
+        
+        # if str_data.startswith("Value:"):
+            # split_str = re.findall(r"Value: (?P<value>\w+), Error: (?P<error>\w+)", str_data)
+            # split_str=[('002A', '20')]
+        if 'value' not in jdata or 'error' not in jdata:
+            continue
+        value = jdata['value']
+        error = jdata['error']
+        # error = int(split_str[0][1], 16)
+        protoerror = ProtoError(error)
+        jdata['error'] = protoerror
+
+        if protoerror != ProtoError.OK:
+            logger.getChild("wfr").debug(f"returning {jdata}")
+            return jdata
+            return {"value":value, "error":protoerror}
+
+        if value_to_wait_for is not None:
+            if value_to_wait_for == value:
+                logger.getChild("wfr").debug(f"returning {jdata}")
+                return jdata
                 return {"value":value, "error":ProtoError(error)}
+            else:
+                continue
+        else:
+            logger.getChild("wfr").debug(f"returning {jdata}")
+            return jdata
+            return {"value":value, "error":ProtoError(error)}
     raise ValueError("Did not receive the right data in time")
 
 
@@ -203,16 +228,19 @@ def set_config(ser:serial.Serial, config_index:ConfigIndex|int, config_value:int
     while True:
         try:
             send_command(ser, id=Commands.CONFIG_SET, data=[config_index, config_value])
-            response = wait_for_response(ser)
+            response = wait_for_response(ser, config_index)
             if response["error"] != ProtoError.OK:
                 logger.getChild("set_config").error(f"{response}")
+            # if response['value'] !=  Commands.config_index:
+            #     logger.getChild("set_config").error(f"got response but not for config index {config_index:X}")
+            #     continue
         except ValueError:
             logger.getChild("set_config").info(f"TIMEOUT on receiving data. Trying again.")
             continue
         break
     
 
-def get_config(ser:serial.Serial, config_index:ConfigIndex|int):
+def get_config(ser:serial.Serial, config_index:ConfigIndex|int) -> int|None:
     if isinstance(config_index, Enum):
         config_index = config_index.value
     while True:
@@ -221,10 +249,12 @@ def get_config(ser:serial.Serial, config_index:ConfigIndex|int):
             response = wait_for_response(ser)
             if response["error"] != ProtoError.OK:
                 logger.getChild("get_config").error(f"{response}")
+            return response.get('value',None)
         except ValueError:
             logger.getChild("get_config").info(f"TIMEOUT on receiving data. Trying again.")
             continue
         break
+    return None
 
 
 def set_color(ser:serial.Serial, frame_index:int, led_index:int, led_color:int):
@@ -259,11 +289,51 @@ def set_color_array(ser:serial.Serial, frame_index:int, color_array:list[int]):
                 continue
             break
 
+def compact_file(color_array:list[int]) -> list[int]:
+    result = []
+    counting = []
+    count = 1
+    working_value = -1
+    n = len(color_array)
+    result.append(color_array[0])
+    counting.append(0)
+    for index,value in enumerate(color_array):
+        if value == result[-1]:
+            counting[-1] += 1
+        else:
+            result.append(value)
+            counting.append(1)
+    final_result = []
+
+    for index,value in enumerate(result):
+        final_result.append(value + counting[index])
+    return final_result
+
+
+def set_color_array_file(ser:serial.Serial, file_id:int, starting_locaiton:int, update:int, color_array:list[int]):
+    chunk_size = 55
+    # chunks = np.array_split(color_array, chunk_size)
+    it = iter(color_array)
+    chunks =[list(islice(it, chunk_size)) for _ in range((len(color_array) + chunk_size - 1) // chunk_size)]
+    for chunk_index, chunk in enumerate(chunks):
+        while True:
+            try:
+                send_command(ser, id=Commands.FILE_SET, data=[file_id, starting_locaiton,  update, *chunk])
+
+                response = wait_for_response(ser)
+                if response["error"] != ProtoError.OK:
+                    logger.getChild("set_color_array").error(f"{response} {file_id=} {chunk=}")
+            except ValueError:
+                logger.getChild("set_color_array").info(f"TIMEOUT on receiving data. Trying again.")
+                continue
+            break
+        # current_location += len(chunk)
+
 
 def send_lighting_frames(ser:serial.Serial):
 
     # turn on the debug printing so I can see whats going on
-    set_config(ser,ConfigIndex.debug_cmd, 0x1)
+    set_config(ser,ConfigIndex.debug_cmd, 0x0)
     
     # turn off the reporting as it can slow_down/error out the bulk of commands
     set_config(ser,ConfigIndex.status_report, 0x0)
@@ -281,7 +351,7 @@ def send_lighting_frames(ser:serial.Serial):
 
     
     # set up the FPS_ms
-    desired_fps = 30
+    desired_fps = 10
     fps_ms = int(round(1000.0/desired_fps,0))
     logger.info(f"Actual FPS: {fps_ms=}")
     set_config(ser,ConfigIndex.fps_ms, fps_ms)
@@ -309,15 +379,29 @@ def send_lighting_frames(ser:serial.Serial):
         set_config(ser,ConfigIndex.running, 0x0)
         set_config(ser,ConfigIndex.debug_cmd, 0x0)
 
-        
+        file_id = 2
+        starting_position = 3
+        position = 0
         start_time = time.time()
         for frame_index in range(0,desired_frames+1):
-            set_color_array(ser, frame_index, color_array)
+            compact_array = compact_file(color_array)
+            # set_color_array(ser, frame_index, color_array)
+            # if frame_index == 97:
+            #     print("stop here")
+            #     compact_array = compact_file(color_array)
+            
+
+            set_color_array_file(ser, file_id, starting_position, position, compact_array)
+            position = 1
     
             color_array = np.roll(color_array,1,axis=0).astype(int).tolist() # type: ignore
             logger.getChild("Frame Generation").info(f"{(frame_index*100)/desired_frames:0.2f}% done")
         
+        set_config(ser,ConfigIndex.status_report, 0x1)
         set_config(ser, ConfigIndex.running, 0x1)
+        set_config(ser, ConfigIndex.current_file, file_id)
+        result= get_config(ser, ConfigIndex.status_report)
+        logger.info(f"Status Report Value: {result}")
         end_time = time.time()
         logger.info(f"It took {end_time-start_time:0.2f} seconds to send {desired_leds} lights with {desired_frames} frames")
 
@@ -330,7 +414,7 @@ def send_lighting_frames(ser:serial.Serial):
 
 def main():
      # Adjust your serial port and baud rate
-    ser = serial.Serial('/dev/ttyACM0', 115200, timeout=0.05)
+    ser = serial.Serial('/dev/ttyACM0', 115200, timeout=0.1)
     time.sleep(0.2)  # wait for rp2040 to reset
 
     # default_sleep_time = 1

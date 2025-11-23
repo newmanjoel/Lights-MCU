@@ -3,8 +3,9 @@
 #include <string>
 
 
-using namespace NRF24_Registers;
 
+using namespace NRF24_Registers;
+extern mutex_t uart_mutex;
 
 void NRF24::enable(){
     gpio_put(pinout.ce, true);
@@ -55,13 +56,12 @@ void NRF24::init(NRF_HAL pinout, spi_inst* spi_instance, uint8_t device_address)
     rf_setup.RF_DR_HIGH = 0;
     WriteReg(Register::RF_SETUP, rf_setup.to_uint8_t());
     rf_setup = ReadReg(Register::RF_SETUP);
-    printf("[DEBUG] [INIT] RF_SETUP: 0x%02X\n", rf_setup.to_uint8_t());
+    // printf("[DEBUG] [INIT] RF_SETUP: 0x%02X\n", rf_setup.to_uint8_t());
 
     // set the address of RX_pipeline 0 (this is us)
     WriteReg(Register::RX_ADDR_P0, device_address);
     
-    printf("[DEBUG] [INIT] Pipeline RX 0 Address: 0x%02X\n", ReadReg(Register::RX_ADDR_P0));
-
+    // printf("[DEBUG] [INIT] Pipeline RX 0 Address: 0x%02X\n", ReadReg(Register::RX_ADDR_P0));
 
     // start up in recv mode
     CONFIG config = {0};
@@ -117,9 +117,9 @@ void NRF24::WriteReg(uint8_t reg, uint8_t value){
 
     
     this->status = this->rx_reg[0];
-    printf("[DEBUG] [RegWrite] reg: %02X, value: %02X\n",reg, value);
-    printf("[DEBUG] [RegWrite] reg: %02X, tx_reg[0]: %02X\n",reg, this->tx_reg[0]);
-    printf("[DEBUG] [RegWrite] reg: %02X, rx_reg[1]: %02X\n",reg, this->rx_reg[1]);
+    // printf("[DEBUG] [RegWrite] reg: %02X, value: %02X\n",reg, value);
+    // printf("[DEBUG] [RegWrite] reg: %02X, tx_reg[0]: %02X\n",reg, this->tx_reg[0]);
+    // printf("[DEBUG] [RegWrite] reg: %02X, rx_reg[1]: %02X\n",reg, this->rx_reg[1]);
     
 }
 
@@ -141,7 +141,7 @@ uint8_t NRF24::ReadReg(uint8_t reg){
     
     this->status = this->rx_reg[0];
     // printf("[DEBUG] [RegRead] reg: %02X, value[0]: %02X\n",reg, this->rx_reg[0]);
-    printf("[DEBUG] [RegRead] reg: %02X, value[1]: %02X\n",reg, this->rx_reg[1]);
+    // printf("[DEBUG] [RegRead] reg: %02X, value[1]: %02X\n",reg, this->rx_reg[1]);
     return rx_reg[1];
     
 }

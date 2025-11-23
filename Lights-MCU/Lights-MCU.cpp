@@ -24,6 +24,8 @@
 #include "light_hal.h"
 #include "nRF24L01P.h"
 #include "files.h"
+#include "ArduinoJson-v7.4.2.h"
+#include <cstring>
 
 
 
@@ -39,10 +41,10 @@ volatile Animation_Config light_config = {250,100,2,0,0,0,1,0,1,0};
 
 uint32_t next_frame[max_led_len] = {0};
 uint32_t current_frame[max_led_len] = {0};
-uint8_t current_file = 0;
-uint32_t playback_location = 0;
+volatile uint8_t current_file = 0;
+volatile uint32_t playback_location = 0;
 
-volatile File files[255];
+volatile File files[10];
 volatile uint32_t data[max_data_len] = {0};
 
 
@@ -68,10 +70,10 @@ void core1_entry(void){
         current_time = time_us_32();
 
         if (((current_time - time_last_byte_recvd) > uart_invalid_timeout_us) and (Parsing::uart_parsing_state != ParseState::WAIT_START)){
-            mutex_enter_blocking(&uart_mutex);
-            uart_puts(UART_ID, "Message Invalid, State Timeout\n");
-            printf("State was: %02x and WAIT_START is %02x\n", Parsing::uart_parsing_state, ParseState::WAIT_START);
-            mutex_exit(&uart_mutex);
+            // mutex_enter_blocking(&uart_mutex);
+            // uart_puts(UART_ID, "Message Invalid, State Timeout\n");
+            // printf("State was: %02x and WAIT_START is %02x\n", Parsing::uart_parsing_state, ParseState::WAIT_START);
+            // mutex_exit(&uart_mutex);
             Parsing::uart_parsing_state = ParseState::WAIT_START;
         }
         
@@ -96,16 +98,22 @@ void core1_entry(void){
                 uart_puts(UART_ID, uart_buff);
                 mutex_exit(&uart_mutex);
             }
-            Result<uint32_t> result = parse_payload(Parsing::uart_buffer, Parsing::payload_len);
+            JsonDocument result = parse_payload(Parsing::uart_buffer, Parsing::payload_len);
             
             // format the results for sending back
-            sprintf(uart_buff, "Value: %08X, Error: %02X \n", result.value, result.error);
+            // sprintf(uart_buff, "Value: %08X, Error: %02X \n", result.value, result.error);
+            clear_uart_buffer();
+            serializeJson(result, uart_buff);
             
             mutex_enter_blocking(&uart_mutex);
             uart_puts(UART_ID, uart_buff);
+            uart_putc(UART_ID, '\n');
             mutex_exit(&uart_mutex);
 
-            clear_uart_buffer();
+            // mutex_enter_blocking(&uart_mutex);
+            
+            // mutex_exit(&uart_mutex);
+
             
             Parsing::uart_parsing_state = ParseState::WAIT_START; // finished processing, put it back to waiting for the next command
 
@@ -215,39 +223,63 @@ uint32_t rgb_to_int(uint8_t red, uint8_t green, uint8_t blue){
 bool system_status_report(__unused repeating_timer_t *rt){
     if(light_config.status_report){
         NRF24_Registers::RX_PWR_D recv_power_dector = {0};
+        JsonDocument status;
+        char buffer[500];
         
         recv_power_dector = wireless.ReadReg(NRF24_Registers::Register::RX_PWR_D);
-        mutex_enter_blocking(&uart_mutex);
-        printf("--- STATUS ---\n");
-        printf("Files\n");
-        printf("\tcurrent_file:%d\n\tplayback_location:%d\n\tfile_start:%d\n\tfile_end:%d\n",
-            current_file,
-            playback_location,
-            files[current_file].start,
-            files[current_file].end
-        );
 
-        printf("Config Values\n");
-        printf("\tfps_ms:%d\n\trunning:%d\n\tled_count:%d\n\tframe_count:%d\n\tcmd_debug:%d\n",
-            light_config.fps_ms,
-            light_config.running,
-            light_config.led_count,
-            light_config.frame_count,
-            light_config.debug_cmd
-        );
-        printf("Uart Status:\n");
-        printf("\tstate: %02X\n", Parsing::uart_parsing_state);
-        printf("Wireless Status:\n");
-        printf("\tPower: %b\n", wireless.status.PWR_UP);
-        printf("\tRX Mode: %b\n", wireless.status.PRIM_RX);
-        printf("\tRevc Pwr Dector: %b\n", recv_power_dector.RPD);
+        status["Status"]["playback_location"] = playback_location;
+        status["Status"]["Current_File"] = current_file;
+        status["Status"]["current_file_start"] = files[current_file].start;
+        status["Status"]["current_file_end"] = files[current_file].end;
+
+        status["Config"]["fps"] =light_config.fps_ms;
+        status["Config"]["running"] =light_config.running;
+        status["Config"]["led_count"] =light_config.led_count;
+        status["Config"]["frame_count"] =light_config.frame_count;
+        status["Config"]["debug_cmd"] =light_config.debug_cmd;
+
+        status["Wireless"]["Power"] =wireless.status.PWR_UP;
+        status["Wireless"]["RX Mode"] =wireless.status.PRIM_RX;
+        status["Wireless"]["Revc Pwr Dector"] =recv_power_dector.RPD;
+
+        serializeJson(status, buffer);
+
+        mutex_enter_blocking(&uart_mutex);
+        // clear_uart_buffer();
+        uart_puts(UART_ID, buffer);
+        uart_putc(UART_ID,'\n');
+        // printf("--- STATUS ---\n");
+        // printf("Files\n");
+        // printf("\tcurrent_file:%d\n\tplayback_location:%d\n\tfile_start:%d\n\tfile_end:%d\n",
+        //     current_file,
+        //     playback_location,
+        //     files[current_file].start,
+        //     files[current_file].end
+        // );
+
+        // printf("Config Values\n");
+        // printf("\tfps_ms:%d\n\trunning:%d\n\tled_count:%d\n\tframe_count:%d\n\tcmd_debug:%d\n",
+        //     light_config.fps_ms,
+        //     light_config.running,
+        //     light_config.led_count,
+        //     light_config.frame_count,
+        //     light_config.debug_cmd
+        // );
+        // printf("Uart Status:\n");
+        // printf("\tstate: %02X\n", Parsing::uart_parsing_state);
+        // printf("Wireless Status:\n");
+        // printf("\tPower: %b\n", wireless.status.PWR_UP);
+        // printf("\tRX Mode: %b\n", wireless.status.PRIM_RX);
+        // printf("\tRevc Pwr Dector: %b\n", recv_power_dector.RPD);
+        // clear_uart_buffer();
         mutex_exit(&uart_mutex);
     }
     return true;
 }
 
 
-bool timer_callback(__unused repeating_timer_t *rt){
+bool push_data_to_lights_callback(__unused repeating_timer_t *rt){
     working_frame_index = (working_frame_index+1) % light_config.frame_count;
     
     rt->delay_us = ((int64_t) light_config.fps_ms)*-1000;
@@ -259,28 +291,48 @@ bool timer_callback(__unused repeating_timer_t *rt){
 
     if (light_config.running)
         memcpy(current_frame, next_frame, sizeof(next_frame));
+        // for (int i=0; i<light_config.led_count; i++){
+        //     current_frame[i] = next_frame[i];
+        // }
         dma_channel_transfer_from_buffer_now(dma_chan,&current_frame, (uint32_t) light_config.led_count);
         // set up the next frame for the next loop. The DMA is happening in the background so we dont have to worry about timeing
-        int i = 0;
-        int j = 0;
-        int temp_index = 0;
-        uint8_t count = 0;
+        volatile int i = 0;
+        volatile int j = 0;
+        volatile int temp_index = 0;
+        volatile uint8_t count = 0;
 
         // data is a continous section of memory for all of the light colors in RLE form
         // current file is just the index of the current file that we are playing back
         // we need to read data from the last place we were and keep reading until we have hit the config.led_count ammount
         // playback location is the last position that we read +1, start from this location next time
+        // TODO: right now i is not indexing correctly
         
-
+        if (current_file != 0){
+            current_file = current_file %10;
+        }
+        count = data[playback_location] & 0xFF;
+        if (count == 0){
+            count =1;
+        }
         for (i=0; i<light_config.led_count; i++){
-            count = data[playback_location] >> 24;
-            for (j=0; j<=count; j++){
-                next_frame[temp_index++] = data[playback_location];
+            --count;
+            next_frame[i] = data[playback_location];
+            if (count == 0){
+                playback_location += 1;
+                count = data[playback_location] &0xFF;
+                if (count == 0){
+                    count =1;
+                }
+
             }
-            playback_location++;
-            if (playback_location >= files[current_file].end){
+            
+            
+            if (playback_location > files[current_file].end){
                 if (files[current_file].action == EndAction::REPEAT){
-                    playback_location = files[current_file].start;
+                    if (i != (light_config.led_count - 1)){
+                        printf("Something has gone wrong");
+                    }
+                    playback_location = (uint32_t) files[current_file].start;
                 }
                 else if (files[current_file].action == EndAction::RUN_FILE){
                     // TODO: figure out a way to set this kind of info
@@ -288,6 +340,7 @@ bool timer_callback(__unused repeating_timer_t *rt){
                 
             }
         }
+        // printf("Next ", playback_location);
         
        
     return true; // keep repeating
@@ -295,9 +348,12 @@ bool timer_callback(__unused repeating_timer_t *rt){
 
 void default_file_0(){
     // setup a basic static color for file 0
-    data[0] = 0xFF<<24 + rgb_to_int(168, 136, 20);
+    uint8_t temp = 0x05;
+    data[0] =  temp+ (rgb_to_int(168, 136, 20) << 8);
+    temp = 95;
+    data[1] =  temp+ (rgb_to_int(100, 100, 100) << 8);
     files[0].start = 0;
-    files[0].end = 0;
+    files[0].end = 1;
     files[0].action = EndAction::REPEAT;
     playback_location = files[0].start;
 
@@ -311,7 +367,6 @@ int main()
     sleep_ms(1); // If this is not here then the whole system hangs forever.
     char uart_buff[50];
 
-    default_file_0();
 
     setup_uart();
     
@@ -427,17 +482,18 @@ int main()
                 dma_chan,
                 &dma_config,
                 &ws2811_pio.pio->txf[ws2811_pio.sm],
-                &led_frame[working_frame_index][0],
+                &current_frame,
                 (uint32_t) light_config.led_count,
                 false
             );
 
-
+    
+    default_file_0();
 
     repeating_timer_t timer;
 
     // negative timeout means exact delay (rather than delay between callbacks)
-    if (!add_repeating_timer_us(-1000000/20, timer_callback, NULL, &timer)) {
+    if (!add_repeating_timer_us(-1000000/20, push_data_to_lights_callback, NULL, &timer)) {
         printf("Failed to add timer\n");
         return 1;
     }
@@ -449,6 +505,7 @@ int main()
         printf("Failed to add timer\n");
         return 1;
     }
+    light_config.debug_cmd = false;
 
     mutex_enter_blocking(&uart_mutex);
     sprintf(uart_buff, "System Clock Frequency is %d Hz\n", clock_get_hz(clk_sys));

@@ -2,6 +2,7 @@
 #define NRF24L01P_H
 
 #include "pico/stdlib.h"
+#include "pico/mutex.h"
 #include "hardware/spi.h"
 #include <stdio.h>
 #include <string>
